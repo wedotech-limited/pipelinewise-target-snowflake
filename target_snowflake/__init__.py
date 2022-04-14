@@ -471,7 +471,9 @@ def flush_records(stream: str,
     db_sync.load_file(s3_key, row_count, size_bytes)
 
     # Delete file from local disk
-    os.remove(filepath)
+    # temp check for stream
+    if stream != "yumbi_zambia-orderitems":
+        os.remove(filepath)
 
     if archive_load_files:
         stream_name_parts = stream_utils.stream_name_to_dict(stream)
