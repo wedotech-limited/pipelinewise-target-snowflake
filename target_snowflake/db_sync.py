@@ -214,6 +214,7 @@ class DbSync:
         self.schema_name = None
         self.grantees = None
         self.file_format = FileFormat(self.connection_config['file_format'], self.query, file_format_type)
+        self.referential_relationships = None
 
         if not self.connection_config.get('stage') and self.file_format.file_format_type == FileFormatTypes.PARQUET:
             self.logger.error("Table stages with Parquet file format is not supported. "
@@ -277,6 +278,8 @@ class DbSync:
             self.data_flattening_max_level = self.connection_config.get('data_flattening_max_level', 0)
             self.flatten_schema = flattening.flatten_schema(stream_schema_message['schema'],
                                                             max_level=self.data_flattening_max_level)
+
+            self.referential_relationships = stream_schema_message['schema'].get("referential_relationships")                                                            
 
         # Use external stage
         if connection_config.get('s3_bucket', None):
@@ -881,3 +884,51 @@ class DbSync:
                 raise exc
 
         return set(col['column_name'] for col in columns)
+
+    def update_relationship_records(self, stream: str, child_stream: str, columns_map: Dict, delete_rule: str):
+        if delete_rule not in ['CASCADE', 'SET NULL']:
+            raise Exception(f'Invalid delete rule for relationship in stream: {stream}')
+
+        parent_stream_data = stream_utils.stream_name_to_dict(stream)
+        child_stream_data = stream_utils.stream_name_to_dict(child_stream)
+        parent_table_name = f'{parent_stream_data["schema_name"]}."{parent_stream_data["table_name"].upper()}"'
+        child_table_name = f'{child_stream_data["schema_name"]}."{child_stream_data["table_name"].upper()}"'
+        parent_columns_select = ', '.join([safe_column_name(col) for col in columns_map.values()])
+        condition = ' AND '.join([f'c.{safe_column_name(child_col)} = p.{safe_column_name(parent_col)}' for (child_col, parent_col) in columns_map.items()])
+        if delete_rule == 'CASCADE':
+            update_sql = f'UPDATE {child_table_name} c ' \
+                f'SET _sdc_deleted_at = p._sdc_deleted_at ' \
+                f'FROM ( ' \
+                f'SELECT {parent_columns_select}, _sdc_deleted_at '  \
+                f'FROM {parent_table_name} ' \
+                f'WHERE _sdc_deleted_at IS NOT NULL ' \
+                f') p ' \
+                f'WHERE c._sdc_deleted_at IS NULL ' \
+                f'AND {condition}'
+        else:
+            child_values = ', '.join([f'{safe_column_name(col)} = NULL' for col in columns_map.keys()])
+            update_sql = f'UPDATE {child_table_name} c ' \
+                f'SET {child_values} ' \
+                f'FROM ( ' \
+                f'SELECT {parent_columns_select}, _sdc_deleted_at '  \
+                f'FROM {parent_table_name} ' \
+                f'WHERE _sdc_deleted_at IS NOT NULL ' \
+                f') p ' \
+                f'WHERE c._sdc_deleted_at IS NULL ' \
+                f'AND {condition}'
+
+        self.logger.info(f'Update relationships sql: {update_sql}')
+        
+        with self.open_connection() as connection:
+            with connection.cursor(snowflake.connector.DictCursor) as cur:
+                updates = 0
+
+                self.logger.debug('Running query: %s', update_sql)
+                cur.execute(update_sql)
+
+                # Get number of updated records
+                results = cur.fetchall()
+                if len(results) > 0:
+                    updates = results[0].get('number of rows updated', 0)
+
+                self.logger.info('Relationship updates %s -> %s = %s', parent_table_name, child_table_name, updates)

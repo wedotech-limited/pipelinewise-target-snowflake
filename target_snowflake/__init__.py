@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from target_snowflake.file_formats import csv
 from target_snowflake.file_formats import parquet
 from target_snowflake import stream_utils
+from target_snowflake import relationship_utils
 
 from target_snowflake.db_sync import DbSync
 from target_snowflake.file_format import FileFormatTypes
@@ -331,6 +332,10 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
         flushed_state = flush_streams(records_to_load, row_count, stream_to_sync, config, state, flushed_state,
                                       archive_load_files_data)
 
+    # Update streams relationships
+    if config.get("update_relationships", False):
+        update_streams_relationships(config, stream_to_sync)
+
     # emit latest state
     emit_state(copy.deepcopy(flushed_state))
 
@@ -470,10 +475,7 @@ def flush_records(stream: str,
     s3_key = db_sync.put_to_stage(filepath, stream, row_count, temp_dir=temp_dir)
     db_sync.load_file(s3_key, row_count, size_bytes)
 
-    # Delete file from local disk
-    # temp check for stream
-    if stream != "yumbi_zambia-orderitems":
-        os.remove(filepath)
+    os.remove(filepath)
 
     if archive_load_files:
         stream_name_parts = stream_utils.stream_name_to_dict(stream)
@@ -507,6 +509,15 @@ def flush_records(stream: str,
     # Delete file from S3
     db_sync.delete_from_stage(stream, s3_key)
 
+def update_streams_relationships(config, streams_sync):
+    relationships = relationship_utils.topological_sort_relationships(list(streams_sync.values()))
+    db_sync = DbSync(config)
+    
+    for relationship in relationships:
+        parent_target_stream_id = relationship_utils.get_target_stream_id(config, relationship['parent_tap_stream_id'])
+        target_stream_id = relationship_utils.get_target_stream_id(config, relationship['tap_stream_id'])
+        db_sync.update_relationship_records(parent_target_stream_id, target_stream_id, relationship["columns"], relationship['delete_rule'])
+    
 
 def main():
     """Main function"""
