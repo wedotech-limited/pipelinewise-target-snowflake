@@ -6,7 +6,7 @@ with open('README.md') as f:
     long_description = f.read()
 
 setup(name="pipelinewise-target-snowflake",
-      version="2.0.1",
+      version="2.2.0",
       description="Singer.io target for loading data to Snowflake - PipelineWise compatible",
       long_description=long_description,
       long_description_content_type='text/markdown',
@@ -25,8 +25,8 @@ setup(name="pipelinewise-target-snowflake",
           'pipelinewise-singer-python==1.*',
           'snowflake-connector-python[pandas]==2.7.*',
           'inflection==0.5.1',
-          'joblib==1.1.0',
-          'boto3==1.21',
+          'joblib==1.2.0',
+          'boto3==1.23.10',
       ],
       extras_require={
           "test": [
