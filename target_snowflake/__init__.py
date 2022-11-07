@@ -8,6 +8,7 @@ import os
 import sys
 import copy
 import pandas as pd
+import numpy as np
 
 from typing import Dict, List, Optional
 from joblib import Parallel, delayed, parallel_backend
@@ -599,6 +600,7 @@ def flush_batch_records(stream: str,
 
     # Load the batch file into chunks for writing to the staging file
     for df in pd.read_csv(filepath, chunksize=100000, dtype=str):
+        df.replace({np.nan: None}, inplace=True)
         if add_metadata_columns:
             if "_sdc_deleted_at" not in df.columns:
                 df["_sdc_deleted_at"] = None
