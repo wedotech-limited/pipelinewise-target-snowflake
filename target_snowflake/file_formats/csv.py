@@ -9,10 +9,7 @@ from tempfile import mkstemp
 from target_snowflake import flattening
 
 
-def create_copy_sql(table_name: str,
-                    stage_name: str,
-                    s3_key: str,
-                    file_format_name: str,
+def create_copy_sql(table_name: str, stage_name: str, s3_key: str, file_format_name: str,
                     columns: List):
     """Generate a CSV compatible snowflake COPY INTO command"""
     p_columns = ', '.join([c['name'] for c in columns])
@@ -22,14 +19,11 @@ def create_copy_sql(table_name: str,
            f"FILE_FORMAT = (format_name='{file_format_name}')"
 
 
-def create_merge_sql(table_name: str,
-                     stage_name: str,
-                     s3_key: str,
-                     file_format_name: str,
-                     columns: List,
-                     pk_merge_condition: str) -> str:
+def create_merge_sql(table_name: str, stage_name: str, s3_key: str, file_format_name: str,
+                     columns: List, pk_merge_condition: str) -> str:
     """Generate a CSV compatible snowflake MERGE INTO command"""
-    p_source_columns = ', '.join([f"{c['trans']}(${i + 1}) {c['name']}" for i, c in enumerate(columns)])
+    p_source_columns = ', '.join(
+        [f"{c['trans']}(${i + 1}) {c['name']}" for i, c in enumerate(columns)])
     p_update = ', '.join([f"{c['name']}=s.{c['name']}" for c in columns])
     p_insert_cols = ', '.join([c['name'] for c in columns])
     p_insert_values = ', '.join([f"s.{c['name']}" for c in columns])
@@ -45,9 +39,7 @@ def create_merge_sql(table_name: str,
            f"VALUES ({p_insert_values})"
 
 
-def record_to_csv_line(record: dict,
-                       schema: dict,
-                       data_flattening_max_level: int = 0) -> str:
+def record_to_csv_line(record: dict, schema: dict, data_flattening_max_level: int = 0) -> str:
     """
     Transforms a record message to a CSV line
 
@@ -61,13 +53,10 @@ def record_to_csv_line(record: dict,
     """
     flatten_record = flattening.flatten_record(record, schema, max_level=data_flattening_max_level)
 
-    return ','.join(
-        [
-            json.dumps(flatten_record[column], ensure_ascii=False) if column in flatten_record and (
-                    flatten_record[column] == 0 or flatten_record[column]) else ''
-            for column in schema
-        ]
-    )
+    return ','.join([
+        json.dumps(flatten_record[column], ensure_ascii=False) if column in flatten_record and
+        (flatten_record[column] == 0 or flatten_record[column]) else '' for column in schema
+    ])
 
 
 def write_records_to_file(outfile,
@@ -93,6 +82,35 @@ def write_records_to_file(outfile,
         outfile.write(bytes(csv_line + '\n', 'UTF-8'))
 
 
+def create_file(suffix: str = 'csv',
+                prefix: str = 'batch_',
+                compression: bool = False,
+                dest_dir: str = None):
+    """
+        Creates a temporary file with a given suffix and prefix
+
+        Args:
+            suffix: Suffix of the file
+            prefix: Prefix of the file
+            compression: Gzip compression enabled or not (Default: False)
+            dest_dir: Destination directory of the file
+
+        Returns:
+            File descriptor and absolute path of the file
+    """
+
+    if dest_dir:
+        os.makedirs(dest_dir, exist_ok=True)
+
+    if compression:
+        file_suffix = f'.{suffix}.gz'
+    else:
+        file_suffix = f'.{suffix}'
+
+    file_descriptor, filename = mkstemp(suffix=file_suffix, prefix=prefix, dir=dest_dir)
+    return file_descriptor, filename
+
+
 def records_to_file(records: Dict,
                     schema: Dict,
                     suffix: str = 'csv',
@@ -115,23 +133,49 @@ def records_to_file(records: Dict,
     Returns:
         Absolute path of the generated CSV file
     """
-    if dest_dir:
-        os.makedirs(dest_dir, exist_ok=True)
 
-    if compression:
-        file_suffix = f'.{suffix}.gz'
-    else:
-        file_suffix = f'.{suffix}'
-
-    filedesc, filename = mkstemp(suffix=file_suffix, prefix=prefix, dir=dest_dir)
+    filedesc, filename = create_file(suffix, prefix, compression, dest_dir)
 
     # Using gzip or plain file object
     if compression:
         with open(filedesc, 'wb') as outfile:
-            with gzip.GzipFile(filename=filename, mode='wb',fileobj=outfile) as gzipfile:
-                write_records_to_file(gzipfile, records, schema, record_to_csv_line, data_flattening_max_level)
+            with gzip.GzipFile(filename=filename, mode='wb', fileobj=outfile) as gzipfile:
+                write_records_to_file(gzipfile, records, schema, record_to_csv_line,
+                                      data_flattening_max_level)
     else:
         with open(filedesc, 'wb') as outfile:
-            write_records_to_file(outfile, records, schema, record_to_csv_line, data_flattening_max_level)
+            write_records_to_file(outfile, records, schema, record_to_csv_line,
+                                  data_flattening_max_level)
 
     return filename
+
+
+def append_records_to_file(records: Dict,
+                           filename: str,
+                           schema: Dict,
+                           compression: bool = False,
+                           data_flattening_max_level: int = 0) -> None:
+    """
+    Appends a record message to a given file
+
+    Args:
+        filename: Path of the file to write to
+        records: List of dictionaries that represents a batch of singer record messages
+        schema: JSONSchema of the records
+        compression: Gzip compression enabled or not (Default: False)
+        data_flattening_max_level: Max level of auto flattening if a record message has nested objects. (Default: 0)
+
+    Returns:
+        None
+    """
+
+    # Using gzip or plain file object
+    if compression:
+        with open(filename, 'ab') as outfile:
+            with gzip.GzipFile(filename=filename, mode='ab', fileobj=outfile) as gzipfile:
+                write_records_to_file(gzipfile, records, schema, record_to_csv_line,
+                                      data_flattening_max_level)
+    else:
+        with open(filename, 'ab') as outfile:
+            write_records_to_file(outfile, records, schema, record_to_csv_line,
+                                  data_flattening_max_level)

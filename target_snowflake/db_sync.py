@@ -19,23 +19,11 @@ def validate_config(config):
     """Validate configuration"""
     errors = []
     s3_required_config_keys = [
-        'account',
-        'dbname',
-        'user',
-        'password',
-        'warehouse',
-        's3_bucket',
-        'stage',
-        'file_format'
+        'account', 'dbname', 'user', 'password', 'warehouse', 's3_bucket', 'stage', 'file_format'
     ]
 
     snowflake_required_config_keys = [
-        'account',
-        'dbname',
-        'user',
-        'password',
-        'warehouse',
-        'file_format'
+        'account', 'dbname', 'user', 'password', 'warehouse', 'file_format'
     ]
 
     required_config_keys = []
@@ -47,9 +35,10 @@ def validate_config(config):
     elif not config.get('s3_bucket', None) and not config.get('stage', None):
         required_config_keys = snowflake_required_config_keys
     else:
-        errors.append("Only one of 's3_bucket' or 'stage' keys defined in config. "
-                      "Use both of them if you want to use an external stage when loading data into snowflake "
-                      "or don't use any of them if you want ot use table stages.")
+        errors.append(
+            "Only one of 's3_bucket' or 'stage' keys defined in config. "
+            "Use both of them if you want to use an external stage when loading data into snowflake "
+            "or don't use any of them if you want ot use table stages.")
 
     # Check if mandatory keys exist
     for k in required_config_keys:
@@ -60,12 +49,16 @@ def validate_config(config):
     config_default_target_schema = config.get('default_target_schema', None)
     config_schema_mapping = config.get('schema_mapping', None)
     if not config_default_target_schema and not config_schema_mapping:
-        errors.append("Neither 'default_target_schema' (string) nor 'schema_mapping' (object) keys set in config.")
+        errors.append(
+            "Neither 'default_target_schema' (string) nor 'schema_mapping' (object) keys set in config."
+        )
 
     # Check if archive load files option is using external stages
     archive_load_files = config.get('archive_load_files', False)
     if archive_load_files and not config.get('s3_bucket', None):
-        errors.append('Archive load files option can be used only with external s3 stages. Please define s3_bucket.')
+        errors.append(
+            'Archive load files option can be used only with external s3 stages. Please define s3_bucket.'
+        )
 
     return errors
 
@@ -132,7 +125,10 @@ def primary_column_names(stream_schema_message):
 
 
 # pylint: disable=invalid-name
-def create_query_tag(query_tag_pattern: str, database: str = None, schema: str = None, table: str = None) -> str:
+def create_query_tag(query_tag_pattern: str,
+                     database: str = None,
+                     schema: str = None,
+                     table: str = None) -> str:
     """
     Generate a string to tag executed queries in Snowflake.
     Replaces tokens `schema` and `table` with the appropriate values.
@@ -156,9 +152,9 @@ def create_query_tag(query_tag_pattern: str, database: str = None, schema: str =
 
     # replace tokens, taking care of json formatted value compatibility
     for k, v in {
-        '{{database}}': json.dumps(database.strip('"')).strip('"') if database else None,
-        '{{schema}}': json.dumps(schema.strip('"')).strip('"') if schema else None,
-        '{{table}}': json.dumps(table.strip('"')).strip('"') if table else None
+            '{{database}}': json.dumps(database.strip('"')).strip('"') if database else None,
+            '{{schema}}': json.dumps(schema.strip('"')).strip('"') if schema else None,
+            '{{table}}': json.dumps(table.strip('"')).strip('"') if table else None
     }.items():
         if k in query_tag:
             query_tag = query_tag.replace(k, v or '')
@@ -170,7 +166,11 @@ def create_query_tag(query_tag_pattern: str, database: str = None, schema: str =
 class DbSync:
     """DbSync class"""
 
-    def __init__(self, connection_config, stream_schema_message=None, table_cache=None, file_format_type=None):
+    def __init__(self,
+                 connection_config,
+                 stream_schema_message=None,
+                 table_cache=None,
+                 file_format_type=None):
         """
             connection_config:      Snowflake connection details
 
@@ -208,17 +208,21 @@ class DbSync:
             stage = stream_utils.stream_name_to_dict(self.connection_config['stage'], separator='.')
             if not stage['schema_name']:
                 self.logger.error(
-                    "The named external stage object in config has to use the <schema>.<stage_name> format.")
+                    "The named external stage object in config has to use the <schema>.<stage_name> format."
+                )
                 sys.exit(1)
 
         self.schema_name = None
         self.grantees = None
-        self.file_format = FileFormat(self.connection_config['file_format'], self.query, file_format_type)
+        self.file_format = FileFormat(self.connection_config['file_format'], self.query,
+                                      file_format_type)
         self.referential_relationships = None
 
-        if not self.connection_config.get('stage') and self.file_format.file_format_type == FileFormatTypes.PARQUET:
-            self.logger.error("Table stages with Parquet file format is not supported. "
-                              "Use named stages with Parquet file format or table stages with CSV files format")
+        if not self.connection_config.get(
+                'stage') and self.file_format.file_format_type == FileFormatTypes.PARQUET:
+            self.logger.error(
+                "Table stages with Parquet file format is not supported. "
+                "Use named stages with Parquet file format or table stages with CSV files format")
             sys.exit(1)
 
         # Init stream schema pylint: disable=line-too-long
@@ -238,7 +242,8 @@ class DbSync:
             #                                                   "target_schema_select_permissions": [ "role_with_select_privs" ]
             #                                               }
             #                                           }
-            config_default_target_schema = self.connection_config.get('default_target_schema', '').strip()
+            config_default_target_schema = self.connection_config.get('default_target_schema',
+                                                                      '').strip()
             config_schema_mapping = self.connection_config.get('schema_mapping', {})
 
             stream_name = stream_schema_message['stream']
@@ -272,14 +277,16 @@ class DbSync:
             #                                                           }
             self.grantees = self.connection_config.get('default_target_schema_select_permissions')
             if config_schema_mapping and stream_schema_name in config_schema_mapping:
-                self.grantees = config_schema_mapping[stream_schema_name].get('target_schema_select_permissions',
-                                                                              self.grantees)
+                self.grantees = config_schema_mapping[stream_schema_name].get(
+                    'target_schema_select_permissions', self.grantees)
 
-            self.data_flattening_max_level = self.connection_config.get('data_flattening_max_level', 0)
-            self.flatten_schema = flattening.flatten_schema(stream_schema_message['schema'],
-                                                            max_level=self.data_flattening_max_level)
+            self.data_flattening_max_level = self.connection_config.get(
+                'data_flattening_max_level', 0)
+            self.flatten_schema = flattening.flatten_schema(
+                stream_schema_message['schema'], max_level=self.data_flattening_max_level)
 
-            self.referential_relationships = stream_schema_message['schema'].get("referential_relationships")                                                            
+            self.referential_relationships = stream_schema_message['schema'].get(
+                "referential_relationships")
 
         # Use external stage
         if connection_config.get('s3_bucket', None):
@@ -309,8 +316,7 @@ class DbSync:
                                               database=self.connection_config['dbname'],
                                               schema=self.schema_name,
                                               table=self.table_name(stream, False, True))
-            }
-        )
+            })
 
     def query(self, query: Union[str, List[str]], params: Dict = None, max_records=0) -> List[Dict]:
         """Run an SQL query in snowflake"""
@@ -350,7 +356,8 @@ class DbSync:
                     # Raise exception if returned rows greater than max allowed records
                     if 0 < max_records < cur.rowcount:
                         raise TooManyRecordsException(
-                            f"Query returned too many records. This query can return max {max_records} records")
+                            f"Query returned too many records. This query can return max {max_records} records"
+                        )
 
                     result = cur.fetchall()
 
@@ -377,15 +384,16 @@ class DbSync:
         """Generate a unique PK string in the record"""
         if len(self.stream_schema_message['key_properties']) == 0:
             return None
-        flatten = flattening.flatten_record(record, self.flatten_schema, max_level=self.data_flattening_max_level)
+        flatten = flattening.flatten_record(record,
+                                            self.flatten_schema,
+                                            max_level=self.data_flattening_max_level)
 
         key_props = []
         for key_prop in self.stream_schema_message['key_properties']:
             if key_prop not in flatten or flatten[key_prop] is None:
                 raise PrimaryKeyNotFoundException(
                     f"Primary key '{key_prop}' does not exist in record or is null. "
-                    f"Available fields: {list(flatten.keys())}"
-                )
+                    f"Available fields: {list(flatten.keys())}")
 
             key_props.append(str(flatten[key_prop]))
 
@@ -422,13 +430,15 @@ class DbSync:
 
         # Determine prefix to use in archive s3 bucket
         default_archive_prefix = 'archive'
-        archive_prefix = self.connection_config.get('archive_load_files_s3_prefix', default_archive_prefix)
+        archive_prefix = self.connection_config.get('archive_load_files_s3_prefix',
+                                                    default_archive_prefix)
         prefixed_archive_key = f'{archive_prefix}/{s3_archive_key}'
 
         copy_source = f'{source_bucket}/{s3_source_key}'
 
         self.logger.info('Copying %s to archive location %s', copy_source, prefixed_archive_key)
-        self.upload_client.copy_object(copy_source, archive_bucket, prefixed_archive_key, s3_archive_metadata)
+        self.upload_client.copy_object(copy_source, archive_bucket, prefixed_archive_key,
+                                       s3_archive_metadata)
 
     def get_stage_name(self, stream):
         """Generate snowflake stage name"""
@@ -445,14 +455,11 @@ class DbSync:
         self.logger.info("Loading %d rows into '%s'", count, self.table_name(stream, False))
 
         # Get list if columns with types
-        columns_with_trans = [
-            {
-                "name": safe_column_name(name),
-                "json_element_name": json_element_name(name),
-                "trans": column_trans(schema)
-            }
-            for (name, schema) in self.flatten_schema.items()
-        ]
+        columns_with_trans = [{
+            "name": safe_column_name(name),
+            "json_element_name": json_element_name(name),
+            "trans": column_trans(schema)
+        } for (name, schema) in self.flatten_schema.items()]
 
         inserts = 0
         updates = 0
@@ -460,41 +467,35 @@ class DbSync:
         # Insert or Update with MERGE command if primary key defined
         if len(self.stream_schema_message['key_properties']) > 0:
             try:
-                inserts, updates = self._load_file_merge(
-                    s3_key=s3_key,
-                    stream=stream,
-                    columns_with_trans=columns_with_trans
-                )
+                inserts, updates = self._load_file_merge(s3_key=s3_key,
+                                                         stream=stream,
+                                                         columns_with_trans=columns_with_trans)
             except Exception as ex:
-                self.logger.error(
-                    'Error while executing MERGE query for table "%s" in stream "%s"',
-                    self.table_name(stream, False), stream
-                )
+                self.logger.error('Error while executing MERGE query for table "%s" in stream "%s"',
+                                  self.table_name(stream, False), stream)
                 raise ex
 
         # Insert only with COPY command if no primary key
         else:
             try:
                 inserts, updates = (
-                    self._load_file_copy(
-                        s3_key=s3_key,
-                        stream=stream,
-                        columns_with_trans=columns_with_trans
-                    ),
+                    self._load_file_copy(s3_key=s3_key,
+                                         stream=stream,
+                                         columns_with_trans=columns_with_trans),
                     0,
                 )
             except Exception as ex:
-                self.logger.error(
-                    'Error while executing COPY query for table "%s" in stream "%s"',
-                    self.table_name(stream, False), stream
-                )
+                self.logger.error('Error while executing COPY query for table "%s" in stream "%s"',
+                                  self.table_name(stream, False), stream)
                 raise ex
 
         self.logger.info(
-            'Loading into %s: %s',
-            self.table_name(stream, False),
-            json.dumps({'inserts': inserts, 'updates': updates, 'size_bytes': size_bytes})
-        )
+            'Loading into %s: %s', self.table_name(stream, False),
+            json.dumps({
+                'inserts': inserts,
+                'updates': updates,
+                'size_bytes': size_bytes
+            }))
 
     def _load_file_merge(self, s3_key, stream, columns_with_trans) -> Tuple[int, int]:
         # MERGE does insert and update
@@ -508,8 +509,7 @@ class DbSync:
                     s3_key=s3_key,
                     file_format_name=self.connection_config['file_format'],
                     columns=columns_with_trans,
-                    pk_merge_condition=self.primary_key_merge_condition()
-                )
+                    pk_merge_condition=self.primary_key_merge_condition())
                 self.logger.debug('Running query: %s', merge_sql)
                 cur.execute(merge_sql)
                 # Get number of inserted and updated records
@@ -529,8 +529,7 @@ class DbSync:
                     stage_name=self.get_stage_name(stream),
                     s3_key=s3_key,
                     file_format_name=self.connection_config['file_format'],
-                    columns=columns_with_trans
-                )
+                    columns=columns_with_trans)
                 self.logger.debug('Running query: %s', copy_sql)
                 cur.execute(copy_sql)
                 # Get number of inserted records - COPY does insert only
@@ -552,13 +551,7 @@ class DbSync:
     def create_table_query(self, is_temporary=False):
         """Generate CREATE TABLE SQL"""
         stream_schema_message = self.stream_schema_message
-        columns = [
-            column_clause(
-                name,
-                schema
-            )
-            for (name, schema) in self.flatten_schema.items()
-        ]
+        columns = [column_clause(name, schema) for (name, schema) in self.flatten_schema.items()]
 
         primary_key = []
         if len(stream_schema_message.get('key_properties', [])) > 0:
@@ -574,15 +567,16 @@ class DbSync:
     def grant_usage_on_schema(self, schema_name, grantee):
         """Grant usage on schema"""
         query = f"GRANT USAGE ON SCHEMA {schema_name} TO ROLE {grantee}"
-        self.logger.info("Granting USAGE privilege on '%s' schema to '%s'... %s", schema_name, grantee, query)
+        self.logger.info("Granting USAGE privilege on '%s' schema to '%s'... %s", schema_name,
+                         grantee, query)
         self.query(query)
 
     # pylint: disable=invalid-name
     def grant_select_on_all_tables_in_schema(self, schema_name, grantee):
         """Grant select on all tables in schema"""
         query = f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema_name} TO ROLE {grantee}"
-        self.logger.info(
-            "Granting SELECT ON ALL TABLES privilege on '%s' schema to '%s'... %s", schema_name, grantee, query)
+        self.logger.info("Granting SELECT ON ALL TABLES privilege on '%s' schema to '%s'... %s",
+                         schema_name, grantee, query)
         self.query(query)
 
     @classmethod
@@ -608,7 +602,8 @@ class DbSync:
 
         # table_cache is an optional pre-collected list of available objects in snowflake
         if self.table_cache:
-            schema_rows = list(filter(lambda x: x['SCHEMA_NAME'] == schema_name.upper(), self.table_cache))
+            schema_rows = list(
+                filter(lambda x: x['SCHEMA_NAME'] == schema_name.upper(), self.table_cache))
         # Query realtime if not pre-collected
         else:
             schema_rows = self.query(f"SHOW SCHEMAS LIKE '{schema_name.upper()}'")
@@ -650,7 +645,8 @@ class DbSync:
                 # Regexp to extract snowflake error code and message from the exception message
                 # Do nothing if schema not exists
                 except snowflake.connector.errors.ProgrammingError as exc:
-                    if not re.match(r'002043 \(02000\):.*\n.*does not exist.*', str(sys.exc_info()[1])):
+                    if not re.match(r'002043 \(02000\):.*\n.*does not exist.*',
+                                    str(sys.exc_info()[1])):
                         raise exc
         else:
             raise Exception("Cannot get table columns. List of table schemas empty")
@@ -729,17 +725,15 @@ class DbSync:
             all_table_columns = self.get_table_columns(table_schemas=[self.schema_name])
 
         # Find the specific table
-        columns = list(filter(lambda x: x['SCHEMA_NAME'] == self.schema_name.upper() and
-                                        f'"{x["TABLE_NAME"].upper()}"' == table_name,
-                              all_table_columns))
+        columns = list(
+            filter(
+                lambda x: x['SCHEMA_NAME'] == self.schema_name.upper() and
+                f'"{x["TABLE_NAME"].upper()}"' == table_name, all_table_columns))
 
         columns_dict = {column['COLUMN_NAME'].upper(): column for column in columns}
 
         columns_to_add = [
-            column_clause(
-                name,
-                properties_schema
-            )
+            column_clause(name, properties_schema)
             for (name, properties_schema) in self.flatten_schema.items()
             if name.upper() not in columns_dict
         ]
@@ -748,21 +742,18 @@ class DbSync:
             self.add_column(column, stream)
 
         columns_to_replace = [
-            (safe_column_name(name), column_clause(
-                name,
-                properties_schema
-            ))
+            (safe_column_name(name), column_clause(name, properties_schema))
             for (name, properties_schema) in self.flatten_schema.items()
-            if name.upper() in columns_dict and
-               columns_dict[name.upper()]['DATA_TYPE'].upper() != column_type(properties_schema).upper() and
+            if name.upper() in columns_dict and columns_dict[name.upper()]['DATA_TYPE'].upper() !=
+            column_type(properties_schema).upper() and
 
-               # Don't alter table if TIMESTAMP_NTZ detected as the new required column type
-               #
-               # Target-snowflake maps every data-time JSON types to TIMESTAMP_NTZ but sometimes
-               # a TIMESTAMP_TZ column is already available in the target table (i.e. created by fastsync initial load)
-               # We need to exclude this conversion otherwise we loose the data that is already populated
-               # in the column
-               column_type(properties_schema).upper() != 'TIMESTAMP_NTZ'
+            # Don't alter table if TIMESTAMP_NTZ detected as the new required column type
+            #
+            # Target-snowflake maps every data-time JSON types to TIMESTAMP_NTZ but sometimes
+            # a TIMESTAMP_TZ column is already available in the target table (i.e. created by fastsync initial load)
+            # We need to exclude this conversion otherwise we loose the data that is already populated
+            # in the column
+            column_type(properties_schema).upper() != 'TIMESTAMP_NTZ'
         ]
 
         for (column_name, column) in columns_to_replace:
@@ -804,18 +795,22 @@ class DbSync:
         table_name_with_schema = self.table_name(stream, False)
 
         if self.table_cache:
-            found_tables = list(filter(lambda x: x['SCHEMA_NAME'] == self.schema_name.upper() and
-                                                 f'"{x["TABLE_NAME"].upper()}"' == table_name,
-                                       self.table_cache))
+            found_tables = list(
+                filter(
+                    lambda x: x['SCHEMA_NAME'] == self.schema_name.upper() and
+                    f'"{x["TABLE_NAME"].upper()}"' == table_name, self.table_cache))
         else:
-            found_tables = [table for table in (self.get_tables([self.schema_name.upper()]))
-                            if f'"{table["TABLE_NAME"].upper()}"' == table_name]
+            found_tables = [
+                table for table in (self.get_tables([self.schema_name.upper()]))
+                if f'"{table["TABLE_NAME"].upper()}"' == table_name
+            ]
 
         if len(found_tables) == 0:
             query = self.create_table_query()
             self.logger.info('Table %s does not exist. Creating...', table_name_with_schema)
             self.query(query)
-            self.grant_privilege(self.schema_name, self.grantees, self.grant_select_on_all_tables_in_schema)
+            self.grant_privilege(self.schema_name, self.grantees,
+                                 self.grant_select_on_all_tables_in_schema)
 
             # Refresh columns cache if required
             if self.table_cache:
@@ -839,17 +834,16 @@ class DbSync:
         queries = []
 
         self.logger.debug('Table: %s, Current PKs: %s | New PKs: %s ',
-                          self.stream_schema_message['stream'],
-                          current_pks,
-                          new_pks
-                          )
+                          self.stream_schema_message['stream'], current_pks, new_pks)
 
         if not new_pks and current_pks:
-            self.logger.info('Table "%s" currently has PK constraint, but we need to drop it.', table_name)
+            self.logger.info('Table "%s" currently has PK constraint, but we need to drop it.',
+                             table_name)
             queries.append(f'alter table {table_name} drop primary key;')
 
         elif new_pks != current_pks:
-            self.logger.info('Changes detected in pk columns of table "%s", need to refresh PK.', table_name)
+            self.logger.info('Changes detected in pk columns of table "%s", need to refresh PK.',
+                             table_name)
             pk_list = ', '.join([safe_column_name(col) for col in new_pks])
 
             if current_pks:
@@ -859,7 +853,8 @@ class DbSync:
 
         # For now, we don't wish to enforce non-nullability on the pk columns
         for pk in current_pks.union(new_pks):
-            queries.append(f'alter table {table_name} alter column {safe_column_name(pk)} drop not null;')
+            queries.append(
+                f'alter table {table_name} alter column {safe_column_name(pk)} drop not null;')
 
         self.query(queries)
 
@@ -885,7 +880,8 @@ class DbSync:
 
         return set(col['column_name'] for col in columns)
 
-    def update_relationship_records(self, stream: str, child_stream: str, columns_map: Dict, delete_rule: str):
+    def update_relationship_records(self, stream: str, child_stream: str, columns_map: Dict,
+                                    delete_rule: str):
         if delete_rule not in ['CASCADE', 'SET NULL']:
             raise Exception(f'Invalid delete rule for relationship in stream: {stream}')
 
@@ -894,7 +890,10 @@ class DbSync:
         parent_table_name = f'{parent_stream_data["schema_name"]}."{parent_stream_data["table_name"].upper()}"'
         child_table_name = f'{child_stream_data["schema_name"]}."{child_stream_data["table_name"].upper()}"'
         parent_columns_select = ', '.join([safe_column_name(col) for col in columns_map.values()])
-        condition = ' AND '.join([f'c.{safe_column_name(child_col)} = p.{safe_column_name(parent_col)}' for (child_col, parent_col) in columns_map.items()])
+        condition = ' AND '.join([
+            f'c.{safe_column_name(child_col)} = p.{safe_column_name(parent_col)}'
+            for (child_col, parent_col) in columns_map.items()
+        ])
         if delete_rule == 'CASCADE':
             update_sql = f'UPDATE {child_table_name} c ' \
                 f'SET _sdc_deleted_at = p._sdc_deleted_at ' \
@@ -906,7 +905,8 @@ class DbSync:
                 f'WHERE c._sdc_deleted_at IS NULL ' \
                 f'AND {condition}'
         else:
-            child_values = ', '.join([f'{safe_column_name(col)} = NULL' for col in columns_map.keys()])
+            child_values = ', '.join(
+                [f'{safe_column_name(col)} = NULL' for col in columns_map.keys()])
             update_sql = f'UPDATE {child_table_name} c ' \
                 f'SET {child_values} ' \
                 f'FROM ( ' \
@@ -918,7 +918,7 @@ class DbSync:
                 f'AND {condition}'
 
         self.logger.info(f'Update relationships sql: {update_sql}')
-        
+
         with self.open_connection() as connection:
             with connection.cursor(snowflake.connector.DictCursor) as cur:
                 updates = 0
@@ -931,4 +931,5 @@ class DbSync:
                 if len(results) > 0:
                     updates = results[0].get('number of rows updated', 0)
 
-                self.logger.info('Relationship updates %s -> %s = %s', parent_table_name, child_table_name, updates)
+                self.logger.info('Relationship updates %s -> %s = %s', parent_table_name,
+                                 child_table_name, updates)

@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import copy
+import pandas as pd
 
 from typing import Dict, List, Optional
 from joblib import Parallel, delayed, parallel_backend
@@ -21,11 +22,8 @@ from target_snowflake import relationship_utils
 
 from target_snowflake.db_sync import DbSync
 from target_snowflake.file_format import FileFormatTypes
-from target_snowflake.exceptions import (
-    RecordValidationException,
-    UnexpectedValueTypeException,
-    InvalidValidationOperationException
-)
+from target_snowflake.exceptions import (RecordValidationException, UnexpectedValueTypeException,
+                                         InvalidValidationOperationException)
 
 LOGGER = get_logger('target_snowflake')
 
@@ -44,11 +42,17 @@ def add_metadata_columns_to_schema(schema_message):
     Metadata columns gives information about data injections
     """
     extended_schema_message = schema_message
-    extended_schema_message['schema']['properties']['_sdc_extracted_at'] = {'type': ['null', 'string'],
-                                                                            'format': 'date-time'}
-    extended_schema_message['schema']['properties']['_sdc_batched_at'] = {'type': ['null', 'string'],
-                                                                          'format': 'date-time'}
-    extended_schema_message['schema']['properties']['_sdc_deleted_at'] = {'type': ['null', 'string']}
+    extended_schema_message['schema']['properties']['_sdc_extracted_at'] = {
+        'type': ['null', 'string'],
+        'format': 'date-time'
+    }
+    extended_schema_message['schema']['properties']['_sdc_batched_at'] = {
+        'type': ['null', 'string'],
+        'format': 'date-time'
+    }
+    extended_schema_message['schema']['properties']['_sdc_deleted_at'] = {
+        'type': ['null', 'string']
+    }
 
     return extended_schema_message
 
@@ -72,10 +76,11 @@ def get_snowflake_statics(config):
         tuple of retrieved items: table_cache, file_format_type
     """
     table_cache = []
+    db = DbSync(config)  # pylint: disable=invalid-name
+
     if not ('disable_table_cache' in config and config['disable_table_cache']):
         LOGGER.info('Getting catalog objects from table cache...')
 
-        db = DbSync(config)  # pylint: disable=invalid-name
         table_cache = db.get_table_columns(
             table_schemas=stream_utils.get_schema_names_from_config(config))
 
@@ -86,7 +91,10 @@ def get_snowflake_statics(config):
 
 
 # pylint: disable=too-many-locals,too-many-branches,too-many-statements,invalid-name
-def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatTypes = None) -> None:
+def persist_lines(config,
+                  lines,
+                  table_cache=None,
+                  file_format_type: FileFormatTypes = None) -> None:
     """Main loop to read and consume singer messages from stdin
 
     Params:
@@ -117,6 +125,7 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
     flush_timestamp = datetime.utcnow()
     archive_load_files = config.get('archive_load_files', False)
     archive_load_files_data = {}
+    delete_batch_files = config.get('delete_batch_files', True)
 
     # Loop over lines from stdin
     for line in lines:
@@ -136,7 +145,8 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
                 raise Exception(f"Line is missing required key 'stream': {line}")
             if o['stream'] not in schemas:
                 raise Exception(
-                    f"A record for stream {o['stream']} was encountered before a corresponding schema")
+                    f"A record for stream {o['stream']} was encountered before a corresponding schema"
+                )
 
             # Get schema for this record's stream
             stream = o['stream']
@@ -170,7 +180,8 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
 
             # append record
             if config.get('add_metadata_columns') or config.get('hard_delete'):
-                records_to_load[stream][primary_key_string] = stream_utils.add_metadata_values_to_record(o)
+                records_to_load[stream][
+                    primary_key_string] = stream_utils.add_metadata_values_to_record(o)
             else:
                 records_to_load[stream][primary_key_string] = o['record']
 
@@ -194,8 +205,8 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
                 flush = True
                 LOGGER.info("Flush triggered by batch_size_rows (%s) reached in %s",
                             batch_size_rows, stream)
-            elif (batch_wait_limit_seconds and
-                  datetime.utcnow() >= (flush_timestamp + timedelta(seconds=batch_wait_limit_seconds))):
+            elif (batch_wait_limit_seconds and datetime.utcnow() >=
+                  (flush_timestamp + timedelta(seconds=batch_wait_limit_seconds))):
                 flush = True
                 LOGGER.info("Flush triggered by batch_wait_limit_seconds (%s)",
                             batch_wait_limit_seconds)
@@ -208,20 +219,87 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
                     filter_streams = [stream]
 
                 # Flush and return a new state dict with new positions only for the flushed streams
-                flushed_state = flush_streams(
-                    records_to_load,
-                    row_count,
-                    stream_to_sync,
-                    config,
-                    state,
-                    flushed_state,
-                    archive_load_files_data,
-                    filter_streams=filter_streams)
+                flushed_state = flush_streams(records_to_load,
+                                              row_count,
+                                              stream_to_sync,
+                                              config,
+                                              state,
+                                              flushed_state,
+                                              archive_load_files_data,
+                                              filter_streams=filter_streams)
 
                 flush_timestamp = datetime.utcnow()
 
                 # emit last encountered state
                 emit_state(copy.deepcopy(flushed_state))
+
+        elif t == "BATCH":
+            LOGGER.info(f"BATCH message received. {str(o)}")
+            if 'stream' not in o:
+                raise Exception(f"Line is missing required key 'stream': {line}")
+
+            if o['stream'] not in schemas:
+                raise Exception(
+                    f"A batch record for stream {o['stream']} was encountered before a corresponding schema"
+                )
+
+            if 'filepath' not in o:
+                raise Exception(f"Line is missing required key 'filepath': {line}")
+
+            if 'batch_size' not in o:
+                raise Exception(f"Line is missing required key 'batch_size': {line}")
+
+            file_format = o.get('format', None)
+
+            if file_format is None or file_format.lower() != "csv":
+                raise Exception(f"File format {file_format} is not supported")
+
+            compression = o.get('compression', None)
+            if compression is not None and compression != "gzip":
+                raise Exception(f"Compression {compression} is not supported")
+
+            stream = o['stream']
+            batch_size = o['batch_size']
+            row_count[stream] = batch_size
+            time_extracted = o.get('time_extracted', None)
+
+            if archive_load_files and stream in archive_load_files_data:
+                # Keep track of min and max of the designated column
+                stream_archive_load_files_values = archive_load_files_data[stream]
+                if 'column' in stream_archive_load_files_values:
+                    # Loading the whole batch to get min and max values will be computational expensive (though can be achieved using pandas)
+                    # So set min and max to 0
+                    stream_archive_load_files_values['min'] = 0
+                    stream_archive_load_files_values['max'] = 0
+
+            records_to_load[stream] = {
+                'filepath': o['filepath'],
+                'batch_size': batch_size,
+                'delete_file': delete_batch_files,
+                'add_metadata_columns': config.get('add_metadata_columns')
+                                        or config.get('hard_delete'),
+                'time_extracted': time_extracted
+            }
+
+            if config.get('flush_all_streams'):
+                filter_streams = None
+            else:
+                filter_streams = [stream]
+
+            # Flush and return a new state dict with new positions only for the flushed streams
+            flushed_state = flush_streams(records_to_load,
+                                          row_count,
+                                          stream_to_sync,
+                                          config,
+                                          state,
+                                          flushed_state,
+                                          archive_load_files_data,
+                                          filter_streams=filter_streams)
+
+            flush_timestamp = datetime.utcnow()
+
+            # emit last encountered state
+            emit_state(copy.deepcopy(flushed_state))
 
         elif t == 'SCHEMA':
             if 'stream' not in o:
@@ -235,7 +313,8 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
             if stream not in schemas or schemas[stream] != new_schema:
 
                 schemas[stream] = new_schema
-                validators[stream] = Draft7Validator(schemas[stream], format_checker=FormatChecker())
+                validators[stream] = Draft7Validator(schemas[stream],
+                                                     format_checker=FormatChecker())
 
                 # flush records from previous stream SCHEMA
                 # if same stream has been encountered again, it means the schema might have been altered
@@ -271,16 +350,16 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
                 #  or
                 #  2) Use fastsync [postgres-to-snowflake, mysql-to-snowflake, etc.]
                 if config.get('primary_key_required', True) and len(o['key_properties']) == 0:
-                    LOGGER.critical('Primary key is set to mandatory but not defined in the [%s] stream', stream)
+                    LOGGER.critical(
+                        'Primary key is set to mandatory but not defined in the [%s] stream',
+                        stream)
                     raise Exception("key_properties field is required")
 
                 key_properties[stream] = o['key_properties']
 
                 if config.get('add_metadata_columns') or config.get('hard_delete'):
-                    stream_to_sync[stream] = DbSync(config,
-                                                    add_metadata_columns_to_schema(o),
-                                                    table_cache,
-                                                    file_format_type)
+                    stream_to_sync[stream] = DbSync(config, add_metadata_columns_to_schema(o),
+                                                    table_cache, file_format_type)
                 else:
                     stream_to_sync[stream] = DbSync(config, o, table_cache, file_format_type)
 
@@ -293,17 +372,15 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
                     # Incremental replication is assumed if o['bookmark_properties'][0] is one of the columns.
                     incremental_key_column_name = stream_utils.get_incremental_key(o)
                     if incremental_key_column_name:
-                        LOGGER.info("Using %s as incremental_key_column_name", incremental_key_column_name)
-                        archive_load_files_data[stream].update(
-                            column=incremental_key_column_name,
-                            min=None,
-                            max=None
-                        )
+                        LOGGER.info("Using %s as incremental_key_column_name",
+                                    incremental_key_column_name)
+                        archive_load_files_data[stream].update(column=incremental_key_column_name,
+                                                               min=None,
+                                                               max=None)
                     else:
                         LOGGER.warning(
                             "archive_load_files is enabled, but no incremental_key_column_name was found. "
-                            "Min/max values will not be added to metadata for stream %s.", stream
-                        )
+                            "Min/max values will not be added to metadata for stream %s.", stream)
 
                 stream_to_sync[stream].create_schema_if_not_exists()
                 stream_to_sync[stream].sync_table()
@@ -329,8 +406,8 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
     # then flush all buckets.
     if sum(row_count.values()) > 0:
         # flush all streams one last time, delete records if needed, reset counts and then emit current state
-        flushed_state = flush_streams(records_to_load, row_count, stream_to_sync, config, state, flushed_state,
-                                      archive_load_files_data)
+        flushed_state = flush_streams(records_to_load, row_count, stream_to_sync, config, state,
+                                      flushed_state, archive_load_files_data)
 
     # Update streams relationships
     if config.get("update_relationships", False):
@@ -341,15 +418,14 @@ def persist_lines(config, lines, table_cache=None, file_format_type: FileFormatT
 
 
 # pylint: disable=too-many-arguments
-def flush_streams(
-        streams,
-        row_count,
-        stream_to_sync,
-        config,
-        state,
-        flushed_state,
-        archive_load_files_data,
-        filter_streams=None):
+def flush_streams(streams,
+                  row_count,
+                  stream_to_sync,
+                  config,
+                  state,
+                  flushed_state,
+                  archive_load_files_data,
+                  filter_streams=None):
     """
     Flushes all buckets and resets records count to 0 as well as empties records to load list
     :param streams: dictionary with records to load per stream
@@ -385,16 +461,16 @@ def flush_streams(
 
     # Single-host, thread-based parallelism
     with parallel_backend('threading', n_jobs=parallelism):
-        Parallel()(delayed(load_stream_batch)(
-            stream=stream,
-            records=streams[stream],
-            row_count=row_count,
-            db_sync=stream_to_sync[stream],
-            no_compression=config.get('no_compression'),
-            delete_rows=config.get('hard_delete'),
-            temp_dir=config.get('temp_dir'),
-            archive_load_files=copy.copy(archive_load_files_data.get(stream, None))
-        ) for stream in streams_to_flush)
+        Parallel()(delayed(load_stream_batch)(stream=stream,
+                                              records=streams[stream],
+                                              row_count=row_count,
+                                              db_sync=stream_to_sync[stream],
+                                              no_compression=config.get('no_compression'),
+                                              delete_rows=config.get('hard_delete'),
+                                              temp_dir=config.get('temp_dir'),
+                                              archive_load_files=copy.copy(
+                                                  archive_load_files_data.get(stream, None)))
+                   for stream in streams_to_flush)
 
     # reset flushed stream records to empty to avoid flushing same records
     for stream in streams_to_flush:
@@ -422,12 +498,22 @@ def flush_streams(
     return flushed_state
 
 
-def load_stream_batch(stream, records, row_count, db_sync, no_compression=False, delete_rows=False,
-                      temp_dir=None, archive_load_files=None):
+def load_stream_batch(stream,
+                      records,
+                      row_count,
+                      db_sync,
+                      no_compression=False,
+                      delete_rows=False,
+                      temp_dir=None,
+                      archive_load_files=None):
     """Load one batch of the stream into target table"""
     # Load into snowflake
     if row_count[stream] > 0:
-        flush_records(stream, records, db_sync, temp_dir, no_compression, archive_load_files)
+        if type(records) == dict and 'filepath' in records:
+            flush_batch_records(stream, records, db_sync, temp_dir, no_compression,
+                                archive_load_files)
+        else:
+            flush_records(stream, records, db_sync, temp_dir, no_compression, archive_load_files)
 
         # Delete soft-deleted, flagged rows - where _sdc_deleted at is not null
         if delete_rows:
@@ -460,12 +546,12 @@ def flush_records(stream: str,
         None
     """
     # Generate file on disk in the required format
-    filepath = db_sync.file_format.formatter.records_to_file(records,
-                                                             db_sync.flatten_schema,
-                                                             compression=not no_compression,
-                                                             dest_dir=temp_dir,
-                                                             data_flattening_max_level=
-                                                             db_sync.data_flattening_max_level)
+    filepath = db_sync.file_format.formatter.records_to_file(
+        records,
+        db_sync.flatten_schema,
+        compression=not no_compression,
+        dest_dir=temp_dir,
+        data_flattening_max_level=db_sync.data_flattening_max_level)
 
     # Get file stats
     row_count = len(records)
@@ -478,46 +564,115 @@ def flush_records(stream: str,
     os.remove(filepath)
 
     if archive_load_files:
-        stream_name_parts = stream_utils.stream_name_to_dict(stream)
-        if 'schema_name' not in stream_name_parts or 'table_name' not in stream_name_parts:
-            raise Exception(f"Failed to extract schema and table names from stream '{stream}'")
-
-        archive_schema = stream_name_parts['schema_name']
-        archive_table = stream_name_parts['table_name']
-        archive_tap = archive_load_files['tap']
-
-        archive_metadata = {
-            'tap': archive_tap,
-            'schema': archive_schema,
-            'table': archive_table,
-            'archived-by': 'pipelinewise_target_snowflake'
-        }
-
-        if 'column' in archive_load_files:
-            archive_metadata.update({
-                'incremental-key': archive_load_files['column'],
-                'incremental-key-min': str(archive_load_files['min']),
-                'incremental-key-max': str(archive_load_files['max'])
-            })
-
-        # Use same file name as in import
-        archive_file = os.path.basename(s3_key)
-        archive_key = f"{archive_tap}/{archive_table}/{archive_file}"
-
-        db_sync.copy_to_archive(s3_key, archive_key, archive_metadata)
+        _archive_load_file(stream, s3_key, db_sync, archive_load_files)
 
     # Delete file from S3
     db_sync.delete_from_stage(stream, s3_key)
 
+
+def flush_batch_records(stream: str,
+                        records_data: Dict,
+                        db_sync: DbSync,
+                        temp_dir: str = None,
+                        no_compression: bool = False,
+                        archive_load_files: Dict = None):
+
+    # Get the file path
+    filepath = records_data["filepath"]
+
+    # Whether to delete the batch file after processing
+    delete_file = records_data.get("delete_file", False)
+
+    # Get file stats
+    row_count = records_data["batch_size"]
+    size_bytes = os.path.getsize(filepath)
+
+    add_metadata_columns = records_data.get("add_metadata_columns", False)
+
+    _, staging_filepath = db_sync.file_format.formatter.create_file(dest_dir=temp_dir,
+                                                                    compression=not no_compression)
+
+    LOGGER.info(f"Staging file: {staging_filepath}")
+
+    batched_at = datetime.now().isoformat()
+    time_extracted = records_data.get("time_extracted", None)
+
+    # Load the batch file into chunks for writing to the staging file
+    for df in pd.read_csv(filepath, chunksize=100000, dtype=str):
+        if add_metadata_columns:
+            if "_sdc_deleted_at" not in df.columns:
+                df["_sdc_deleted_at"] = None
+
+            df["_sdc_batched_at"] = batched_at
+            df["_sdc_extracted_at"] = time_extracted
+
+        # Use index orient since writing records to file expects a dictionary
+        records = df.to_dict(orient="index")
+        db_sync.file_format.formatter.append_records_to_file(
+            records,
+            staging_filepath,
+            db_sync.flatten_schema,
+            compression=not no_compression,
+            data_flattening_max_level=db_sync.data_flattening_max_level)
+
+    # Upload to s3 and load into Snowflake
+    s3_key = db_sync.put_to_stage(staging_filepath, stream, row_count, temp_dir=temp_dir)
+    db_sync.load_file(s3_key, row_count, size_bytes)
+
+    os.remove(staging_filepath)
+
+    if delete_file:
+        os.remove(filepath)
+
+    if archive_load_files:
+        _archive_load_file(stream, s3_key, db_sync, archive_load_files)
+
+    # Delete file from S3
+    db_sync.delete_from_stage(stream, s3_key)
+
+
 def update_streams_relationships(config, streams_sync):
     relationships = relationship_utils.topological_sort_relationships(list(streams_sync.values()))
     db_sync = DbSync(config)
-    
+
     for relationship in relationships:
-        parent_target_stream_id = relationship_utils.get_target_stream_id(config, relationship['parent_tap_stream_id'])
-        target_stream_id = relationship_utils.get_target_stream_id(config, relationship['tap_stream_id'])
-        db_sync.update_relationship_records(parent_target_stream_id, target_stream_id, relationship["columns"], relationship['delete_rule'])
-    
+        parent_target_stream_id = relationship_utils.get_target_stream_id(
+            config, relationship['parent_tap_stream_id'])
+        target_stream_id = relationship_utils.get_target_stream_id(config,
+                                                                   relationship['tap_stream_id'])
+        db_sync.update_relationship_records(parent_target_stream_id, target_stream_id,
+                                            relationship["columns"], relationship['delete_rule'])
+
+
+def _archive_load_file(stream: str, s3_key: str, db_sync: DbSync, archive_load_files: Dict) -> None:
+    stream_name_parts = stream_utils.stream_name_to_dict(stream)
+    if 'schema_name' not in stream_name_parts or 'table_name' not in stream_name_parts:
+        raise Exception(f"Failed to extract schema and table names from stream '{stream}'")
+
+    archive_schema = stream_name_parts['schema_name']
+    archive_table = stream_name_parts['table_name']
+    archive_tap = archive_load_files['tap']
+
+    archive_metadata = {
+        'tap': archive_tap,
+        'schema': archive_schema,
+        'table': archive_table,
+        'archived-by': 'pipelinewise_target_snowflake'
+    }
+
+    if 'column' in archive_load_files:
+        archive_metadata.update({
+            'incremental-key': archive_load_files['column'],
+            'incremental-key-min': str(archive_load_files['min']),
+            'incremental-key-max': str(archive_load_files['max'])
+        })
+
+    # Use same file name as in import
+    archive_file = os.path.basename(s3_key)
+    archive_key = f"{archive_tap}/{archive_table}/{archive_file}"
+
+    db_sync.copy_to_archive(s3_key, archive_key, archive_metadata)
+
 
 def main():
     """Main function"""

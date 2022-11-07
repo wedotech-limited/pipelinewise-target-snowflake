@@ -8,30 +8,23 @@ from tempfile import mkstemp
 from target_snowflake import flattening
 
 
-def create_copy_sql(table_name: str,
-                    stage_name: str,
-                    s3_key: str,
-                    file_format_name: str,
+def create_copy_sql(table_name: str, stage_name: str, s3_key: str, file_format_name: str,
                     columns: List):
     """Generate a Parquet compatible snowflake COPY INTO command"""
     p_target_columns = ', '.join([c['name'] for c in columns])
-    p_source_columns = ', '.join([f"{c['trans']}($1:{c['json_element_name']}) {c['name']}"
-                                  for i, c in enumerate(columns)])
+    p_source_columns = ', '.join(
+        [f"{c['trans']}($1:{c['json_element_name']}) {c['name']}" for i, c in enumerate(columns)])
 
     return f"COPY INTO {table_name} ({p_target_columns}) " \
            f"FROM (SELECT {p_source_columns} FROM '@{stage_name}/{s3_key}') " \
            f"FILE_FORMAT = (format_name='{file_format_name}')"
 
 
-def create_merge_sql(table_name: str,
-                     stage_name: str,
-                     s3_key: str,
-                     file_format_name: str,
-                     columns: List,
-                     pk_merge_condition: str) -> str:
+def create_merge_sql(table_name: str, stage_name: str, s3_key: str, file_format_name: str,
+                     columns: List, pk_merge_condition: str) -> str:
     """Generate a Parquet compatible snowflake MERGE INTO command"""
-    p_source_columns = ', '.join([f"{c['trans']}($1:{c['json_element_name']}) {c['name']}"
-                                  for i, c in enumerate(columns)])
+    p_source_columns = ', '.join(
+        [f"{c['trans']}($1:{c['json_element_name']}) {c['name']}" for i, c in enumerate(columns)])
     p_update = ', '.join([f"{c['name']}=s.{c['name']}" for c in columns])
     p_insert_cols = ', '.join([c['name'] for c in columns])
     p_insert_values = ', '.join([f"s.{c['name']}" for c in columns])
@@ -63,10 +56,30 @@ def records_to_dataframe(records: Dict,
     flattened_records = []
 
     for record in records.values():
-        flatten_record = flattening.flatten_record(record, schema, max_level=data_flattening_max_level)
+        flatten_record = flattening.flatten_record(record,
+                                                   schema,
+                                                   max_level=data_flattening_max_level)
         flattened_records.append(flatten_record)
 
     return pandas.DataFrame(data=flattened_records)
+
+
+def create_file(suffix: str = 'parquet',
+                prefix: str = 'batch_',
+                compression: bool = False,
+                dest_dir: str = None):
+
+    if dest_dir:
+        os.makedirs(dest_dir, exist_ok=True)
+
+    if compression:
+        file_suffix = f'.{suffix}.gz'
+    else:
+        file_suffix = f'.{suffix}'
+
+    file_descriptor, filename = mkstemp(suffix=file_suffix, prefix=prefix, dir=dest_dir)
+
+    return file_descriptor, filename
 
 
 def records_to_file(records: Dict,
@@ -96,7 +109,7 @@ def records_to_file(records: Dict,
 
     if compression:
         file_suffix = f'.{suffix}.gz'
-        parquet_compression='gzip'
+        parquet_compression = 'gzip'
     else:
         file_suffix = f'.{suffix}'
         parquet_compression = None
@@ -107,3 +120,12 @@ def records_to_file(records: Dict,
     dataframe.to_parquet(filename, compression=parquet_compression)
 
     return filename
+
+
+def append_records_to_file(records: Dict,
+                           filename: str,
+                           schema: Dict,
+                           compression: bool = False,
+                           data_flattening_max_level: int = 0) -> None:
+
+    raise Exception("Appending records to parquet file is not supported")
