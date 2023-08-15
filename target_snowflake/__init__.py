@@ -414,6 +414,11 @@ def persist_lines(config,
     if config.get("update_relationships", False):
         update_streams_relationships(config, stream_to_sync)
 
+    # Soft delete rows that were not updated in the last run
+    if config.get("soft_delete_batch_records", False):
+        for stream in stream_to_sync:
+            stream_to_sync[stream].soft_delete_batch_records(config.get("soft_delete_batch_records_condition_column", "_sdc_extracted_at"))
+
     # emit latest state
     emit_state(copy.deepcopy(flushed_state))
 

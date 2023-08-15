@@ -880,6 +880,31 @@ class DbSync:
 
         return set(col['column_name'] for col in columns)
 
+    def soft_delete_batch_records(self, column_name: str):
+        table_name = self.table_name(self.stream_schema_message['stream'], False)
+
+        update_sql = f'UPDATE {table_name} ' \
+            f'SET _sdc_deleted_at = CURRENT_TIMESTAMP ' \
+            f'WHERE _sdc_deleted_at IS NULL ' \
+            f'AND ({safe_column_name(column_name)} IS NULL ' \
+            f'OR {safe_column_name(column_name)} != (SELECT {safe_column_name(column_name)} FROM {table_name} ORDER BY _sdc_batched_at DESC LIMIT 1))'
+
+        with self.open_connection() as connection:
+            with connection.cursor(snowflake.connector.DictCursor) as cur:
+                updates = 0
+
+                self.logger.debug('Running query: %s', update_sql)
+                cur.execute(update_sql)
+
+                # Get number of updated records
+                results = cur.fetchall()
+                if len(results) > 0:
+                    updates = results[0].get('number of rows updated', 0)
+
+                if updates > 0:
+                    self.logger.info(f"Soft delete batch records in table '{table_name}': {updates}")
+
+
     def update_relationship_records(self, stream: str, child_stream: str, columns_map: Dict,
                                     delete_rule: str):
         if delete_rule not in ['CASCADE', 'SET NULL']:
