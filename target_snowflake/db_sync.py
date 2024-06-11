@@ -13,17 +13,19 @@ from target_snowflake.file_format import FileFormat, FileFormatTypes
 from target_snowflake.exceptions import TooManyRecordsException, PrimaryKeyNotFoundException
 from target_snowflake.upload_clients.s3_upload_client import S3UploadClient
 from target_snowflake.upload_clients.snowflake_upload_client import SnowflakeUploadClient
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 
 
 def validate_config(config):
     """Validate configuration"""
     errors = []
     s3_required_config_keys = [
-        'account', 'dbname', 'user', 'password', 'warehouse', 's3_bucket', 'stage', 'file_format'
+        'account', 'dbname', 'user', 'warehouse', 's3_bucket', 'stage', 'file_format'
     ]
 
     snowflake_required_config_keys = [
-        'account', 'dbname', 'user', 'password', 'warehouse', 'file_format'
+        'account', 'dbname', 'user', 'warehouse', 'file_format'
     ]
 
     required_config_keys = []
@@ -300,6 +302,41 @@ class DbSync:
         stream = None
         if self.stream_schema_message:
             stream = self.stream_schema_message['stream']
+
+        if self.connection_config.get("private_key") is not None:
+            with open(self.connection_config.get("private_key"), "rb") as key_file:
+                private_key_password = self.connection_config.get("private_key_password")
+                if private_key_password is not None:
+                    private_key_password = private_key_password.encode()
+
+                p_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=private_key_password,
+                    backend=default_backend(),
+                )
+
+            pkb = p_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+            
+            return snowflake.connector.connect(
+                user=self.connection_config['user'],
+                account=self.connection_config['account'],
+                private_key=pkb,
+                database=self.connection_config['dbname'],
+                warehouse=self.connection_config['warehouse'],
+                role=self.connection_config.get('role', None),
+                autocommit=True,
+                session_parameters={
+                    # Quoted identifiers should be case sensitive
+                    'QUOTED_IDENTIFIERS_IGNORE_CASE': 'FALSE',
+                    'QUERY_TAG': create_query_tag(self.connection_config.get('query_tag'),
+                                                  database=self.connection_config['dbname'],
+                                                  schema=self.schema_name,
+                                                  table=self.table_name(stream, False, True))
+                })
 
         return snowflake.connector.connect(
             user=self.connection_config['user'],
