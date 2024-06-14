@@ -703,6 +703,7 @@ def main():
     persist_lines(config, singer_messages, table_cache, file_format_type)
 
     LOGGER.info("Exiting normally")
+    sys.exit(0)
 
 
 if __name__ == '__main__':
