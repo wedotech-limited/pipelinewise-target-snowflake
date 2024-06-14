@@ -15,6 +15,7 @@ from target_snowflake.upload_clients.s3_upload_client import S3UploadClient
 from target_snowflake.upload_clients.snowflake_upload_client import SnowflakeUploadClient
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
+import backoff
 
 
 def validate_config(config):
@@ -297,6 +298,7 @@ class DbSync:
         else:
             self.upload_client = SnowflakeUploadClient(connection_config, self)
 
+    @backoff.on_exception(backoff.expo, Exception, max_tries=10)
     def open_connection(self):
         """Open snowflake connection"""
         stream = None
