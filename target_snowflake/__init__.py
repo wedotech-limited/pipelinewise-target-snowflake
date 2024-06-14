@@ -693,6 +693,8 @@ def main():
     else:
         config = {}
 
+    LOGGER.info("Starting target-snowflake")
+
     # Init columns cache
     table_cache, file_format_type = get_snowflake_statics(config)
 
@@ -700,7 +702,7 @@ def main():
     singer_messages = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
     persist_lines(config, singer_messages, table_cache, file_format_type)
 
-    LOGGER.debug("Exiting normally")
+    LOGGER.info("Exiting normally")
 
 
 if __name__ == '__main__':
