@@ -217,9 +217,6 @@ class DbSync:
 
         self.schema_name = None
         self.grantees = None
-        self.file_format = FileFormat(self.connection_config['file_format'], self.query,
-                                      file_format_type)
-        self.referential_relationships = None
 
         # Key-Pair auth
         self.private_auth_key = None
@@ -240,6 +237,10 @@ class DbSync:
                 format=serialization.PrivateFormat.PKCS8,
                 encryption_algorithm=serialization.NoEncryption(),
             )
+
+        self.file_format = FileFormat(self.connection_config['file_format'], self.query,
+                                      file_format_type)
+        self.referential_relationships = None
 
         if not self.connection_config.get(
                 'stage') and self.file_format.file_format_type == FileFormatTypes.PARQUET:
