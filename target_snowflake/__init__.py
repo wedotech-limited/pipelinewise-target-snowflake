@@ -66,6 +66,7 @@ def emit_state(state: Optional[Dict]):
         LOGGER.info('Emitting state %s', line)
         sys.stdout.write(f"{line}\n")
         sys.stdout.flush()
+        LOGGER.info("State emitted")
 
 
 def get_snowflake_statics(config):
@@ -422,6 +423,7 @@ def persist_lines(config,
 
     # emit latest state
     emit_state(copy.deepcopy(flushed_state))
+    LOGGER.info("Finished persisting all messages")
 
 
 # pylint: disable=too-many-arguments

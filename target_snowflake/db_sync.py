@@ -290,6 +290,26 @@ class DbSync:
 
             self.referential_relationships = stream_schema_message['schema'].get(
                 "referential_relationships")
+            
+        # Key-Pair auth
+        self.private_auth_key = None
+        if self.connection_config.get("private_key") is not None:
+            with open(self.connection_config.get("private_key"), "rb") as key_file:
+                private_key_password = self.connection_config.get("private_key_password")
+                if private_key_password is not None:
+                    private_key_password = private_key_password.encode()
+
+                p_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=private_key_password,
+                    backend=default_backend(),
+                )
+
+            self.private_auth_key = p_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
 
         # Use external stage
         if connection_config.get('s3_bucket', None):
@@ -305,28 +325,11 @@ class DbSync:
         if self.stream_schema_message:
             stream = self.stream_schema_message['stream']
 
-        if self.connection_config.get("private_key") is not None:
-            with open(self.connection_config.get("private_key"), "rb") as key_file:
-                private_key_password = self.connection_config.get("private_key_password")
-                if private_key_password is not None:
-                    private_key_password = private_key_password.encode()
-
-                p_key = serialization.load_pem_private_key(
-                    key_file.read(),
-                    password=private_key_password,
-                    backend=default_backend(),
-                )
-
-            pkb = p_key.private_bytes(
-                encoding=serialization.Encoding.DER,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            )
-            
+        if self.private_auth_key is not None:
             return snowflake.connector.connect(
                 user=self.connection_config['user'],
                 account=self.connection_config['account'],
-                private_key=pkb,
+                private_key=self.private_auth_key,
                 database=self.connection_config['dbname'],
                 warehouse=self.connection_config['warehouse'],
                 role=self.connection_config.get('role', None),
