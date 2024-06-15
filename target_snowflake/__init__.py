@@ -704,9 +704,9 @@ def main():
     persist_lines(config, singer_messages, table_cache, file_format_type)
 
     LOGGER.info("Exiting normally")
-    
+
     for thread in threading.enumerate():
-        print(f"Thread Name: {thread.name}, Daemon: {thread.daemon}, Alive: {thread.is_alive()}")
+        LOGGER.info(f"Thread Name: {thread.name}, Daemon: {thread.daemon}, Alive: {thread.is_alive()}")
 
 
 if __name__ == '__main__':
