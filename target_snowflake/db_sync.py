@@ -221,6 +221,26 @@ class DbSync:
                                       file_format_type)
         self.referential_relationships = None
 
+        # Key-Pair auth
+        self.private_auth_key = None
+        if self.connection_config.get("private_key") is not None:
+            with open(self.connection_config.get("private_key"), "rb") as key_file:
+                private_key_password = self.connection_config.get("private_key_password")
+                if private_key_password is not None:
+                    private_key_password = private_key_password.encode()
+
+                p_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=private_key_password,
+                    backend=default_backend(),
+                )
+
+            self.private_auth_key = p_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+
         if not self.connection_config.get(
                 'stage') and self.file_format.file_format_type == FileFormatTypes.PARQUET:
             self.logger.error(
@@ -291,25 +311,6 @@ class DbSync:
             self.referential_relationships = stream_schema_message['schema'].get(
                 "referential_relationships")
             
-        # Key-Pair auth
-        self.private_auth_key = None
-        if self.connection_config.get("private_key") is not None:
-            with open(self.connection_config.get("private_key"), "rb") as key_file:
-                private_key_password = self.connection_config.get("private_key_password")
-                if private_key_password is not None:
-                    private_key_password = private_key_password.encode()
-
-                p_key = serialization.load_pem_private_key(
-                    key_file.read(),
-                    password=private_key_password,
-                    backend=default_backend(),
-                )
-
-            self.private_auth_key = p_key.private_bytes(
-                encoding=serialization.Encoding.DER,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            )
 
         # Use external stage
         if connection_config.get('s3_bucket', None):
