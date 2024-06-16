@@ -20,7 +20,6 @@ from target_snowflake.file_formats import csv
 from target_snowflake.file_formats import parquet
 from target_snowflake import stream_utils
 from target_snowflake import relationship_utils
-import threading
 
 from target_snowflake.db_sync import DbSync
 from target_snowflake.file_format import FileFormatTypes
@@ -705,10 +704,7 @@ def main():
     singer_messages = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
     persist_lines(config, singer_messages, table_cache, file_format_type)
 
-    LOGGER.info("Exiting normally")
-
-    for thread in threading.enumerate():
-        LOGGER.info(f"Thread Name: {thread.name}, Daemon: {thread.daemon}, Alive: {thread.is_alive()}")
+    LOGGER.info("Exiting Normally")
 
 
 if __name__ == '__main__':

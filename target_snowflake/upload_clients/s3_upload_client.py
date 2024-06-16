@@ -4,6 +4,7 @@ S3 Upload Client
 import os
 import boto3
 import datetime
+import backoff
 
 from snowflake.connector.encryption_util import SnowflakeEncryptionUtil
 from snowflake.connector.storage_client import SnowflakeFileEncryptionMaterial
@@ -44,6 +45,7 @@ class S3UploadClient(BaseUploadClient):
                                   region_name=config.get('s3_region_name'),
                                   endpoint_url=config.get('s3_endpoint_url'))
 
+    @backoff.on_exception(backoff.expo, Exception, max_tries=5)
     def upload_file(self, file, stream, temp_dir=None):
         """Upload file to an external snowflake stage on s3"""
         # Generating key in S3 bucket
@@ -90,6 +92,7 @@ class S3UploadClient(BaseUploadClient):
 
         return s3_key
 
+    @backoff.on_exception(backoff.expo, Exception, max_tries=5)
     def delete_object(self, stream: str, key: str) -> None:
         """Delete object from an external snowflake stage on S3"""
         self.logger.info('Deleting %s from external snowflake stage on S3', key)
