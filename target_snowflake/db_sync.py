@@ -727,7 +727,7 @@ class DbSync:
                              WHEN 'REAL'  THEN 'FLOAT'
                              ELSE PARSE_JSON("data_type"):type::varchar
                            END data_type
-                          ,"null" AS nullable
+                          ,"null?" AS nullable
                       FROM TABLE(RESULT_SCAN(%(LAST_QID)s))
                 """
 
