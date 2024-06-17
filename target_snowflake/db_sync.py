@@ -336,6 +336,9 @@ class DbSync:
                 warehouse=self.connection_config['warehouse'],
                 role=self.connection_config.get('role', None),
                 autocommit=True,
+                login_timeout=60,
+                network_timeout=60,
+                socket_timeout=60,
                 session_parameters={
                     # Quoted identifiers should be case sensitive
                     'QUOTED_IDENTIFIERS_IGNORE_CASE': 'FALSE',
@@ -353,6 +356,9 @@ class DbSync:
             warehouse=self.connection_config['warehouse'],
             role=self.connection_config.get('role', None),
             autocommit=True,
+            login_timeout=60,
+            network_timeout=60,
+            socket_timeout=60,
             session_parameters={
                 # Quoted identifiers should be case sensitive
                 'QUOTED_IDENTIFIERS_IGNORE_CASE': 'FALSE',
