@@ -195,7 +195,6 @@ class DbSync:
         self.connection_config = connection_config
         self.stream_schema_message = stream_schema_message
         self.table_cache = table_cache
-        self.pk_cache = None
 
         # logger to be used across the class's methods
         self.logger = get_logger('target_snowflake')
@@ -667,7 +666,6 @@ class DbSync:
 
     def get_tables(self, table_schemas=None):
         """Get list of tables of certain schema(s) from snowflake metadata"""
-        self.logger.info(f"Discovering tables in schema(s): {table_schemas}")
         tables = []
         if table_schemas:
             for schema in table_schemas:
@@ -727,7 +725,6 @@ class DbSync:
                              WHEN 'REAL'  THEN 'FLOAT'
                              ELSE PARSE_JSON("data_type"):type::varchar
                            END data_type
-                          ,"null?" AS nullable
                       FROM TABLE(RESULT_SCAN(%(LAST_QID)s))
                 """
 
@@ -869,22 +866,6 @@ class DbSync:
 
         self._refresh_table_pks()
 
-    def _is_nullable(self, column_name: str) -> bool:
-        if self.table_cache:
-            all_table_columns = self.table_cache
-        else:
-            all_table_columns = self.get_table_columns(table_schemas=[self.schema_name])
-
-        column = next((c for c in all_table_columns if c['SCHEMA_NAME'] == self.schema_name.upper() and c['COLUMN_NAME'].upper() == column_name.upper()), None)
-
-        if column is None:
-            return False
-        
-        if 'NULLABLE' not in column:
-            return False
-        
-        return column['NULLABLE'] is True or str(column['NULLABLE']).upper() == 'TRUE'
-
     def _refresh_table_pks(self):
         """
         Refresh table PK constraints by either dropping or adding PK based on changes to `key_properties` of the
@@ -917,32 +898,12 @@ class DbSync:
 
         # For now, we don't wish to enforce non-nullability on the pk columns
         for pk in current_pks.union(new_pks):
-            if not self._is_nullable(pk):
-                queries.append(
-                    f'alter table {table_name} alter column {safe_column_name(pk)} drop not null;')
+            queries.append(
+                f'alter table {table_name} alter column {safe_column_name(pk)} drop not null;')
 
-        if len(queries) > 0:
-            self.query(queries)
+        self.query(queries)
 
     def _get_current_pks(self) -> Set[str]:
-        try:
-            if self.pk_cache is None:
-                show_query = f"SHOW PRIMARY KEYS IN DATABASE {self.connection_config['dbname']};"
-                try:
-                    self.pk_cache = self.query(show_query)
-                except snowflake.connector.errors.ProgrammingError as exc:
-                    if not re.match(r'002043 \(02000\):.*\n.*does not exist.*', str(sys.exc_info()[1])):
-                        raise exc
-                
-            table_name = self.table_name(self.stream_schema_message['stream'], False, True)
-            schema_name = self.schema_name.upper()
-            return set(col['column_name'] for col in self.pk_cache if col['schema_name'].upper() == schema_name and col['table_name'].upper() == table_name.upper())
-        except Exception as e:
-            self.logger.error('Error while fetching PKs: %s', e)
-            return self._get_current_pks_old()
-
-
-    def _get_current_pks_old(self) -> Set[str]:
         """
         Finds the stream's current Pk in Snowflake.
         Returns: Set of pk columns, in upper case. Empty means table has no PK
