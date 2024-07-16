@@ -959,7 +959,7 @@ class DbSync:
         
         if self.primary_keys_cache is not None and len(self.primary_keys_cache) > 0:
             table_name = self.table_name(self.stream_schema_message['stream'], False, True)
-            columns = set(col['COLUMN_NAME'] for col in self.primary_keys_cache if col['SCHEMA_NAME'] == self.schema_name.upper() == f'"{col["TABLE_NAME"].upper()}"' == table_name )
+            columns = set(col['COLUMN_NAME'] for col in self.primary_keys_cache if col['SCHEMA_NAME'] == self.schema_name.upper() and f'"{col["TABLE_NAME"].upper()}"' == table_name )
             if len(columns) > 0:
                 return columns
 
