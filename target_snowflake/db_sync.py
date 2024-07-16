@@ -173,7 +173,8 @@ class DbSync:
                  connection_config,
                  stream_schema_message=None,
                  table_cache=None,
-                 file_format_type=None):
+                 file_format_type=None,
+                 primary_key_cache=None):
         """
             connection_config:      Snowflake connection details
 
@@ -195,6 +196,7 @@ class DbSync:
         self.connection_config = connection_config
         self.stream_schema_message = stream_schema_message
         self.table_cache = table_cache
+        self.primary_keys_cache = primary_key_cache
 
         # logger to be used across the class's methods
         self.logger = get_logger('target_snowflake')
@@ -700,6 +702,7 @@ class DbSync:
 
     def get_table_columns(self, table_schemas=None):
         """Get list of columns and tables of certain schema(s) from snowflake metadata"""
+        self.logger.info(f"Discovering tables in schema(s): {table_schemas}")
         table_columns = []
         if table_schemas:
             for schema in table_schemas:
@@ -725,6 +728,7 @@ class DbSync:
                              WHEN 'REAL'  THEN 'FLOAT'
                              ELSE PARSE_JSON("data_type"):type::varchar
                            END data_type
+                          ,PARSE_JSON("data_type"):nullable::boolean AS nullable
                       FROM TABLE(RESULT_SCAN(%(LAST_QID)s))
                 """
 
@@ -752,6 +756,50 @@ class DbSync:
             raise Exception("Cannot get table columns. List of table schemas empty")
 
         return table_columns
+    
+    def get_table_primary_keys(self, table_schemas=None):
+        """Get list of primary keys of certain schema(s) from snowflake metadata"""
+        self.logger.info(f"Discovering primary keys in schema(s): {table_schemas}")
+        table_pks = []
+        if table_schemas:
+            for schema in table_schemas:
+                queries = []
+
+                # Get primary keys by SHOW PRIMARY KEYS
+                show_pks = f"SHOW PRIMARY KEYS IN SCHEMA {self.connection_config['dbname']}.{schema}"
+
+                # Convert output of SHOW PRIMARY KEYS to table and insert results into the cache PKS table
+                select = """
+                    SELECT "schema_name" AS schema_name
+                          ,"table_name"  AS table_name
+                          ,"column_name" AS column_name
+                      FROM TABLE(RESULT_SCAN(%(LAST_QID)s))
+                """
+
+                queries.extend([show_pks, select])
+
+                # Run everything in one transaction
+                try:
+                    pks = self.query(queries, max_records=99999)
+
+                    if not pks:
+                        self.logger.warning('No primary keys discovered in the schema "%s"',
+                                            f"{self.connection_config['dbname']}.{schema}")
+                    else:
+                        table_pks.extend(pks)
+
+                # Catch exception when schema not exists and SHOW PRIMARY KEYS throws a ProgrammingError
+                # Regexp to extract snowflake error code and message from the exception message
+                # Do nothing if schema not exists
+                except snowflake.connector.errors.ProgrammingError as exc:
+                    if not re.match(r'002003 \(02000\):.*\n.*does not exist or not authorized.*',
+                                    str(sys.exc_info()[1])):
+                        raise exc
+
+        else:
+            raise Exception("Cannot get table primary keys. List of table schemas empty")
+
+        return table_pks
 
     def refresh_table_cache(self):
         """Refreshes the internal table cache"""
@@ -873,6 +921,7 @@ class DbSync:
         The non-nullability of PK column is also dropped.
         """
         table_name = self.table_name(self.stream_schema_message['stream'], False)
+        table_name_without_schema = self.table_name(self.stream_schema_message['stream'], False, True)
         current_pks = self._get_current_pks()
         new_pks = set(pk.upper() for pk in self.stream_schema_message.get('key_properties', []))
 
@@ -898,12 +947,22 @@ class DbSync:
 
         # For now, we don't wish to enforce non-nullability on the pk columns
         for pk in current_pks.union(new_pks):
+            if self._is_column_nullable(table_name_without_schema, pk):
+                continue
+
             queries.append(
                 f'alter table {table_name} alter column {safe_column_name(pk)} drop not null;')
 
         self.query(queries)
 
     def _get_current_pks(self) -> Set[str]:
+        
+        if self.primary_keys_cache is not None and len(self.primary_keys_cache) > 0:
+            table_name = self.table_name(self.stream_schema_message['stream'], False, True)
+            columns = set(col['COLUMN_NAME'] for col in self.primary_keys_cache if col['SCHEMA_NAME'] == self.schema_name.upper() == f'"{col["TABLE_NAME"].upper()}"' == table_name )
+            if len(columns) > 0:
+                return columns
+
         """
         Finds the stream's current Pk in Snowflake.
         Returns: Set of pk columns, in upper case. Empty means table has no PK
@@ -949,6 +1008,22 @@ class DbSync:
                 if updates > 0:
                     self.logger.info(f"Soft delete batch records in table '{table_name}': {updates}")
 
+
+    def _is_column_nullable(self, table_name: str, column_name: str) -> bool:
+        if self.table_cache is None or len(self.table_cache) == 0:
+            return False
+        
+        columns = list(
+            filter(
+                lambda x: x['SCHEMA_NAME'] == self.schema_name.upper() and
+                f'"{x["TABLE_NAME"].upper()}"' == table_name and
+                x['COLUMN_NAME'].upper() == column_name.upper(), self.table_cache))
+        
+        if len(columns) == 0:
+            return False
+        
+        column = columns[0]
+        return column['NULLABLE'] is True
 
     def update_relationship_records(self, stream: str, child_stream: str, columns_map: Dict,
                                     delete_rule: str):

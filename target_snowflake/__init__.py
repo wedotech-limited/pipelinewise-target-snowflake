@@ -75,9 +75,10 @@ def get_snowflake_statics(config):
         config: configuration dictionary
 
     Returns:
-        tuple of retrieved items: table_cache, file_format_type
+        tuple of retrieved items: table_cache, file_format_type, primary_keys_cache
     """
     table_cache = []
+    primary_keys_cache = []
     db = DbSync(config)  # pylint: disable=invalid-name
 
     if not ('disable_table_cache' in config and config['disable_table_cache']):
@@ -85,18 +86,21 @@ def get_snowflake_statics(config):
 
         table_cache = db.get_table_columns(
             table_schemas=stream_utils.get_schema_names_from_config(config))
+        
+        primary_keys_cache = db.get_table_primary_keys(table_schemas=stream_utils.get_schema_names_from_config(config))
 
     # The file format is detected at DbSync init time
     file_format_type = db.file_format.file_format_type
 
-    return table_cache, file_format_type
+    return table_cache, file_format_type, primary_keys_cache
 
 
 # pylint: disable=too-many-locals,too-many-branches,too-many-statements,invalid-name
 def persist_lines(config,
                   lines,
                   table_cache=None,
-                  file_format_type: FileFormatTypes = None) -> None:
+                  file_format_type: FileFormatTypes = None,
+                  primary_keys_cache=None) -> None:
     """Main loop to read and consume singer messages from stdin
 
     Params:
@@ -109,6 +113,7 @@ def persist_lines(config,
         file_format_type: Optional FileFormatTypes value that defines which supported file format to use
                           to load data into Snowflake.
                           If not provided then it will be detected automatically
+        primary_keys_cache: Optional dictionary of Snowflake table primary keys.
 
     Returns:
         tuple of retrieved items: table_cache, file_format_type
@@ -361,9 +366,9 @@ def persist_lines(config,
 
                 if config.get('add_metadata_columns') or config.get('hard_delete'):
                     stream_to_sync[stream] = DbSync(config, add_metadata_columns_to_schema(o),
-                                                    table_cache, file_format_type)
+                                                    table_cache, file_format_type, primary_keys_cache)
                 else:
-                    stream_to_sync[stream] = DbSync(config, o, table_cache, file_format_type)
+                    stream_to_sync[stream] = DbSync(config, o, table_cache, file_format_type, primary_keys_cache)
 
                 if archive_load_files:
                     archive_load_files_data[stream] = {
@@ -698,11 +703,11 @@ def main():
     LOGGER.info("Starting target-snowflake")
 
     # Init columns cache
-    table_cache, file_format_type = get_snowflake_statics(config)
+    table_cache, file_format_type, primary_keys_cache = get_snowflake_statics(config)
 
     # Consume singer messages
     singer_messages = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
-    persist_lines(config, singer_messages, table_cache, file_format_type)
+    persist_lines(config, singer_messages, table_cache, file_format_type, primary_keys_cache)
 
     LOGGER.info("Exiting Normally")
 

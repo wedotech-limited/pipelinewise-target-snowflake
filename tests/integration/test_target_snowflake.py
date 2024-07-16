@@ -77,8 +77,8 @@ class TestIntegration(unittest.TestCase):
         Selecting from a real table instead of INFORMATION_SCHEMA and keeping it
         in memory while the target-snowflake is running results better load performance.
         """
-        table_cache, file_format_type = target_snowflake.get_snowflake_statics(self.config)
-        target_snowflake.persist_lines(self.config, lines, table_cache, file_format_type)
+        table_cache, file_format_type, primary_keys_cache = target_snowflake.get_snowflake_statics(self.config)
+        target_snowflake.persist_lines(self.config, lines, table_cache, file_format_type, primary_keys_cache)
 
     def remove_metadata_columns_from_rows(self, rows):
         """Removes metadata columns from a list of rows"""
