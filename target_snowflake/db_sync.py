@@ -806,6 +806,8 @@ class DbSync:
         self.table_cache = self.get_table_columns([self.schema_name])
 
     def update_columns(self):
+        table_name_with_schema = self.table_name(self.stream_schema_message['stream'], False)
+        self.logger.info('Updating columns in table %s', table_name_with_schema)
         """Adds required but not existing columns the target table according to the schema"""
         stream_schema_message = self.stream_schema_message
         stream = stream_schema_message['stream']
@@ -857,6 +859,8 @@ class DbSync:
         # Refresh table cache if required
         if self.table_cache and (columns_to_add or columns_to_replace):
             self.table_cache = self.get_table_columns(table_schemas=[self.schema_name])
+
+        self.logger.info('Finished processing columns in table %s', table_name_with_schema)
 
     def drop_column(self, column_name, stream):
         """Drops column from an existing table"""

@@ -148,6 +148,7 @@ def persist_lines(config,
         t = o['type']
 
         if t == 'RECORD':
+            LOGGER.info("Record message received.")
             if 'stream' not in o:
                 raise Exception(f"Line is missing required key 'stream': {line}")
             if o['stream'] not in schemas:
@@ -240,6 +241,8 @@ def persist_lines(config,
                 # emit last encountered state
                 emit_state(copy.deepcopy(flushed_state))
 
+            LOGGER.info("Record message processed.")
+
         elif t == "BATCH":
             LOGGER.info(f"BATCH message received. {str(o)}")
             if 'stream' not in o:
@@ -309,6 +312,7 @@ def persist_lines(config,
             emit_state(copy.deepcopy(flushed_state))
 
         elif t == 'SCHEMA':
+            LOGGER.info("Schema message received.")
             if 'stream' not in o:
                 raise Exception(f"Line is missing required key 'stream': {line}")
 
@@ -394,6 +398,8 @@ def persist_lines(config,
 
                 row_count[stream] = 0
                 total_row_count[stream] = 0
+
+            LOGGER.info("Schema message processed.")
 
         elif t == 'ACTIVATE_VERSION':
             LOGGER.debug('ACTIVATE_VERSION message')
