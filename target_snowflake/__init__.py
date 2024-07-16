@@ -148,7 +148,6 @@ def persist_lines(config,
         t = o['type']
 
         if t == 'RECORD':
-            LOGGER.info("Record message received.")
             if 'stream' not in o:
                 raise Exception(f"Line is missing required key 'stream': {line}")
             if o['stream'] not in schemas:
@@ -241,8 +240,6 @@ def persist_lines(config,
                 # emit last encountered state
                 emit_state(copy.deepcopy(flushed_state))
 
-            LOGGER.info("Record message processed.")
-
         elif t == "BATCH":
             LOGGER.info(f"BATCH message received. {str(o)}")
             if 'stream' not in o:
@@ -314,90 +311,95 @@ def persist_lines(config,
         elif t == 'SCHEMA':
             LOGGER.info("Schema message received.")
             if 'stream' not in o:
+                LOGGER.error("Line is missing required key 'stream': %s", line)
                 raise Exception(f"Line is missing required key 'stream': {line}")
 
-            stream = o['stream']
-            new_schema = stream_utils.float_to_decimal(o['schema'])
+            try:
+                stream = o['stream']
+                new_schema = stream_utils.float_to_decimal(o['schema'])
 
-            # Update and flush only if the the schema is new or different than
-            # the previously used version of the schema
-            if stream not in schemas or schemas[stream] != new_schema:
+                # Update and flush only if the the schema is new or different than
+                # the previously used version of the schema
+                if stream not in schemas or schemas[stream] != new_schema:
 
-                schemas[stream] = new_schema
-                validators[stream] = Draft7Validator(schemas[stream],
-                                                     format_checker=FormatChecker())
+                    schemas[stream] = new_schema
+                    validators[stream] = Draft7Validator(schemas[stream],
+                                                        format_checker=FormatChecker())
 
-                # flush records from previous stream SCHEMA
-                # if same stream has been encountered again, it means the schema might have been altered
-                # so previous records need to be flushed
-                if row_count.get(stream, 0) > 0:
-                    # flush all streams, delete records if needed, reset counts and then emit current state
-                    if config.get('flush_all_streams'):
-                        filter_streams = None
+                    # flush records from previous stream SCHEMA
+                    # if same stream has been encountered again, it means the schema might have been altered
+                    # so previous records need to be flushed
+                    if row_count.get(stream, 0) > 0:
+                        # flush all streams, delete records if needed, reset counts and then emit current state
+                        if config.get('flush_all_streams'):
+                            filter_streams = None
+                        else:
+                            filter_streams = [stream]
+                        flushed_state = flush_streams(records_to_load,
+                                                    row_count,
+                                                    stream_to_sync,
+                                                    config,
+                                                    state,
+                                                    flushed_state,
+                                                    archive_load_files_data,
+                                                    filter_streams=filter_streams)
+
+                        # emit latest encountered state
+                        emit_state(flushed_state)
+
+                    # key_properties key must be available in the SCHEMA message.
+                    if 'key_properties' not in o:
+                        raise Exception("key_properties field is required")
+
+                    # Log based and Incremental replications on tables with no Primary Key
+                    # cause duplicates when merging UPDATE events.
+                    # Stop loading data by default if no Primary Key.
+                    #
+                    # If you want to load tables with no Primary Key:
+                    #  1) Set ` 'primary_key_required': false ` in the target-snowflake config.json
+                    #  or
+                    #  2) Use fastsync [postgres-to-snowflake, mysql-to-snowflake, etc.]
+                    if config.get('primary_key_required', True) and len(o['key_properties']) == 0:
+                        LOGGER.critical(
+                            'Primary key is set to mandatory but not defined in the [%s] stream',
+                            stream)
+                        raise Exception("key_properties field is required")
+
+                    key_properties[stream] = o['key_properties']
+
+                    if config.get('add_metadata_columns') or config.get('hard_delete'):
+                        stream_to_sync[stream] = DbSync(config, add_metadata_columns_to_schema(o),
+                                                        table_cache, file_format_type, primary_keys_cache)
                     else:
-                        filter_streams = [stream]
-                    flushed_state = flush_streams(records_to_load,
-                                                  row_count,
-                                                  stream_to_sync,
-                                                  config,
-                                                  state,
-                                                  flushed_state,
-                                                  archive_load_files_data,
-                                                  filter_streams=filter_streams)
+                        stream_to_sync[stream] = DbSync(config, o, table_cache, file_format_type, primary_keys_cache)
 
-                    # emit latest encountered state
-                    emit_state(flushed_state)
+                    if archive_load_files:
+                        archive_load_files_data[stream] = {
+                            'tap': config.get('tap_id'),
+                        }
 
-                # key_properties key must be available in the SCHEMA message.
-                if 'key_properties' not in o:
-                    raise Exception("key_properties field is required")
+                        # In case of incremental replication, track min/max of the replication key.
+                        # Incremental replication is assumed if o['bookmark_properties'][0] is one of the columns.
+                        incremental_key_column_name = stream_utils.get_incremental_key(o)
+                        if incremental_key_column_name:
+                            LOGGER.info("Using %s as incremental_key_column_name",
+                                        incremental_key_column_name)
+                            archive_load_files_data[stream].update(column=incremental_key_column_name,
+                                                                min=None,
+                                                                max=None)
+                        else:
+                            LOGGER.warning(
+                                "archive_load_files is enabled, but no incremental_key_column_name was found. "
+                                "Min/max values will not be added to metadata for stream %s.", stream)
 
-                # Log based and Incremental replications on tables with no Primary Key
-                # cause duplicates when merging UPDATE events.
-                # Stop loading data by default if no Primary Key.
-                #
-                # If you want to load tables with no Primary Key:
-                #  1) Set ` 'primary_key_required': false ` in the target-snowflake config.json
-                #  or
-                #  2) Use fastsync [postgres-to-snowflake, mysql-to-snowflake, etc.]
-                if config.get('primary_key_required', True) and len(o['key_properties']) == 0:
-                    LOGGER.critical(
-                        'Primary key is set to mandatory but not defined in the [%s] stream',
-                        stream)
-                    raise Exception("key_properties field is required")
+                    stream_to_sync[stream].create_schema_if_not_exists()
+                    stream_to_sync[stream].sync_table()
 
-                key_properties[stream] = o['key_properties']
-
-                if config.get('add_metadata_columns') or config.get('hard_delete'):
-                    stream_to_sync[stream] = DbSync(config, add_metadata_columns_to_schema(o),
-                                                    table_cache, file_format_type, primary_keys_cache)
-                else:
-                    stream_to_sync[stream] = DbSync(config, o, table_cache, file_format_type, primary_keys_cache)
-
-                if archive_load_files:
-                    archive_load_files_data[stream] = {
-                        'tap': config.get('tap_id'),
-                    }
-
-                    # In case of incremental replication, track min/max of the replication key.
-                    # Incremental replication is assumed if o['bookmark_properties'][0] is one of the columns.
-                    incremental_key_column_name = stream_utils.get_incremental_key(o)
-                    if incremental_key_column_name:
-                        LOGGER.info("Using %s as incremental_key_column_name",
-                                    incremental_key_column_name)
-                        archive_load_files_data[stream].update(column=incremental_key_column_name,
-                                                               min=None,
-                                                               max=None)
-                    else:
-                        LOGGER.warning(
-                            "archive_load_files is enabled, but no incremental_key_column_name was found. "
-                            "Min/max values will not be added to metadata for stream %s.", stream)
-
-                stream_to_sync[stream].create_schema_if_not_exists()
-                stream_to_sync[stream].sync_table()
-
-                row_count[stream] = 0
-                total_row_count[stream] = 0
+                    row_count[stream] = 0
+                    total_row_count[stream] = 0
+            except Exception as ex:
+                LOGGER.error(f"Error processing SCHEMA message: {str(ex)}", exc_info=True)
+                raise ex
 
             LOGGER.info("Schema message processed.")
 
