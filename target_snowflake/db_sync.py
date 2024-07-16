@@ -728,7 +728,7 @@ class DbSync:
                              WHEN 'REAL'  THEN 'FLOAT'
                              ELSE PARSE_JSON("data_type"):type::varchar
                            END data_type
-                          ,PARSE_JSON("data_type"):nullable::boolean AS nullable
+                          ,"null?" AS nullable
                       FROM TABLE(RESULT_SCAN(%(LAST_QID)s))
                 """
 
@@ -1023,7 +1023,10 @@ class DbSync:
             return False
         
         column = columns[0]
-        return column['NULLABLE'] is True
+        nullable = column.get('NULLABLE', False)
+        if isinstance(nullable, bool):
+            return nullable
+        return nullable.upper() == 'TRUE'
 
     def update_relationship_records(self, stream: str, child_stream: str, columns_map: Dict,
                                     delete_rule: str):
