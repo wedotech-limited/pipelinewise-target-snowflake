@@ -952,8 +952,9 @@ class DbSync:
 
             queries.append(
                 f'alter table {table_name} alter column {safe_column_name(pk)} drop not null;')
-
-        self.query(queries)
+            
+        if len(queries) > 0:
+            self.query(queries)
 
     def _get_current_pks(self) -> Set[str]:
         
