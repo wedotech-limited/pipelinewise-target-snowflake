@@ -322,13 +322,14 @@ def persist_lines(config,
                 # the previously used version of the schema
                 if stream not in schemas or schemas[stream] != new_schema:
                     if stream not in schemas:
-                        LOGGER.info("New schema found for stream %s", stream)
+                        LOGGER.info("New schema for stream %s", stream)
                     else:
                         LOGGER.info("Schema changed for stream %s", stream)
                         
                     schemas[stream] = new_schema
                     validators[stream] = Draft7Validator(schemas[stream],
                                                         format_checker=FormatChecker())
+                    LOGGER.info("Validator created")
 
                     # flush records from previous stream SCHEMA
                     # if same stream has been encountered again, it means the schema might have been altered
@@ -397,8 +398,13 @@ def persist_lines(config,
                                 "archive_load_files is enabled, but no incremental_key_column_name was found. "
                                 "Min/max values will not be added to metadata for stream %s.", stream)
 
+                    LOGGER.info("Processing schema")
                     stream_to_sync[stream].create_schema_if_not_exists()
+                    LOGGER.info("Schema processed")
+
+                    LOGGER.info("Syncing table")
                     stream_to_sync[stream].sync_table()
+                    LOGGER.info("Table synced")
 
                     row_count[stream] = 0
                     total_row_count[stream] = 0
