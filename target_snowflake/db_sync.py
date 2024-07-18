@@ -165,6 +165,36 @@ def create_query_tag(query_tag_pattern: str,
     return query_tag
 
 
+class _PKAuth:
+    def __init__(self) -> None:
+        self._cache = {}
+
+    def get_private_auth_key(self, connection_config):
+        key_path = connection_config.get("private_key")
+        if key_path is None:
+            return None
+        if self._cache.get(key_path) is None:
+            with open(key_path, "rb") as key_file:
+                private_key_password = connection_config.get("private_key_password")
+                if private_key_password is not None:
+                    private_key_password = private_key_password.encode()
+
+                p_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=private_key_password,
+                    backend=default_backend(),
+                )
+
+            self._cache[key_path] = p_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+
+        return self._cache[key_path]
+    
+private_key_auth = _PKAuth()
+
 # pylint: disable=too-many-public-methods,too-many-instance-attributes
 class DbSync:
     """DbSync class"""
@@ -221,24 +251,7 @@ class DbSync:
         self.grantees = None
 
         # Key-Pair auth
-        self.private_auth_key = None
-        if self.connection_config.get("private_key") is not None:
-            with open(self.connection_config.get("private_key"), "rb") as key_file:
-                private_key_password = self.connection_config.get("private_key_password")
-                if private_key_password is not None:
-                    private_key_password = private_key_password.encode()
-
-                p_key = serialization.load_pem_private_key(
-                    key_file.read(),
-                    password=private_key_password,
-                    backend=default_backend(),
-                )
-
-            self.private_auth_key = p_key.private_bytes(
-                encoding=serialization.Encoding.DER,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            )
+        self.use_private_key_auth = self.connection_config.get("private_key") is not None
 
         self.file_format = FileFormat(self.connection_config['file_format'], self.query,
                                       file_format_type)
@@ -329,11 +342,11 @@ class DbSync:
         if self.stream_schema_message:
             stream = self.stream_schema_message['stream']
 
-        if self.private_auth_key is not None:
+        if self.use_private_key_auth:
             return snowflake.connector.connect(
                 user=self.connection_config['user'],
                 account=self.connection_config['account'],
-                private_key=self.private_auth_key,
+                private_key=private_key_auth.get_private_auth_key(self.connection_config),
                 database=self.connection_config['dbname'],
                 warehouse=self.connection_config['warehouse'],
                 role=self.connection_config.get('role', None),
