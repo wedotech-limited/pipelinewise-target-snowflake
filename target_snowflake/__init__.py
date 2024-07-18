@@ -448,6 +448,8 @@ def persist_lines(config,
     emit_state(copy.deepcopy(flushed_state))
     LOGGER.info("Finished persisting all messages")
     LOGGER.info("Target-Snowflake finished")
+    sys.stdout.flush()
+    sys.stdout.close()
 
 
 # pylint: disable=too-many-arguments
