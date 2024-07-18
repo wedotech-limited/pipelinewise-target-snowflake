@@ -656,6 +656,7 @@ class DbSync:
             schema_rows = self.query(f"SHOW SCHEMAS LIKE '{schema_name.upper()}'")
 
         if len(schema_rows) == 0:
+            self.logger.info("Schema '%s' does not exist. Creating...", schema_name)
             query = f"CREATE SCHEMA IF NOT EXISTS {schema_name}"
             self.logger.info("Schema '%s' does not exist. Creating... %s", schema_name, query)
             self.query(query)
@@ -665,6 +666,8 @@ class DbSync:
             # Refresh columns cache if required
             if self.table_cache:
                 self.table_cache = self.get_table_columns(table_schemas=[self.schema_name])
+        else:
+            self.logger.info("Schema '%s' exists", schema_name)
 
     def get_tables(self, table_schemas=None):
         """Get list of tables of certain schema(s) from snowflake metadata"""
@@ -892,11 +895,15 @@ class DbSync:
         table_name_with_schema = self.table_name(stream, False)
 
         if self.table_cache:
+            self.logger.info("Table cache is available. Searching for table '%s' in cache...",
+                             table_name_with_schema)
             found_tables = list(
                 filter(
                     lambda x: x['SCHEMA_NAME'] == self.schema_name.upper() and
                     f'"{x["TABLE_NAME"].upper()}"' == table_name, self.table_cache))
         else:
+            self.logger.info("Table cache is not available. Searching for table '%s' in Snowflake...",
+                             table_name_with_schema)
             found_tables = [
                 table for table in (self.get_tables([self.schema_name.upper()]))
                 if f'"{table["TABLE_NAME"].upper()}"' == table_name

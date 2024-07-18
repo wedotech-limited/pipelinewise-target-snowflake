@@ -321,7 +321,11 @@ def persist_lines(config,
                 # Update and flush only if the the schema is new or different than
                 # the previously used version of the schema
                 if stream not in schemas or schemas[stream] != new_schema:
-
+                    if stream not in schemas:
+                        LOGGER.info("New schema found for stream %s", stream)
+                    else:
+                        LOGGER.info("Schema changed for stream %s", stream)
+                        
                     schemas[stream] = new_schema
                     validators[stream] = Draft7Validator(schemas[stream],
                                                         format_checker=FormatChecker())
@@ -330,6 +334,7 @@ def persist_lines(config,
                     # if same stream has been encountered again, it means the schema might have been altered
                     # so previous records need to be flushed
                     if row_count.get(stream, 0) > 0:
+                        LOGGER.info("Flushing records")
                         # flush all streams, delete records if needed, reset counts and then emit current state
                         if config.get('flush_all_streams'):
                             filter_streams = None
