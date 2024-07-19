@@ -168,12 +168,14 @@ def create_query_tag(query_tag_pattern: str,
 class _PKAuth:
     def __init__(self) -> None:
         self._cache = {}
+        self.logger = get_logger("target_snowflake")
 
     def get_private_auth_key(self, connection_config):
         key_path = connection_config.get("private_key")
         if key_path is None:
             return None
         if self._cache.get(key_path) is None:
+            self.logger.info("Loading private private key auth")
             with open(key_path, "rb") as key_file:
                 private_key_password = connection_config.get("private_key_password")
                 if private_key_password is not None:
@@ -329,11 +331,12 @@ class DbSync:
             
 
         # Use external stage
-        if connection_config.get('s3_bucket', None):
-            self.upload_client = S3UploadClient(connection_config)
-        # Use table stage
-        else:
-            self.upload_client = SnowflakeUploadClient(connection_config, self)
+        # if connection_config.get('s3_bucket', None):
+        #     self.upload_client = S3UploadClient(connection_config)
+        # # Use table stage
+        # else:
+        #     self.upload_client = SnowflakeUploadClient(connection_config, self)
+        self.upload_client = None
 
     @backoff.on_exception(backoff.expo, Exception, max_tries=10)
     def open_connection(self):
@@ -462,11 +465,13 @@ class DbSync:
     def put_to_stage(self, file, stream, count, temp_dir=None):
         """Upload file to snowflake stage"""
         self.logger.info('Uploading %d rows to stage', count)
-        return self.upload_client.upload_file(file, stream, temp_dir)
+        upload_client = self._get_upload_client()
+        return upload_client.upload_file(file, stream, temp_dir)
 
     def delete_from_stage(self, stream, s3_key):
         """Delete file from snowflake stage"""
-        self.upload_client.delete_object(stream, s3_key)
+        upload_client = self._get_upload_client()
+        upload_client.delete_object(stream, s3_key)
 
     def copy_to_archive(self, s3_source_key, s3_archive_key, s3_archive_metadata):
         """
@@ -497,7 +502,8 @@ class DbSync:
         copy_source = f'{source_bucket}/{s3_source_key}'
 
         self.logger.info('Copying %s to archive location %s', copy_source, prefixed_archive_key)
-        self.upload_client.copy_object(copy_source, archive_bucket, prefixed_archive_key,
+        upload_client = self._get_upload_client()
+        upload_client.copy_object(copy_source, archive_bucket, prefixed_archive_key,
                                        s3_archive_metadata)
 
     def get_stage_name(self, stream):
@@ -1106,3 +1112,13 @@ class DbSync:
 
                 self.logger.info('Relationship updates %s -> %s = %s', parent_table_name,
                                  child_table_name, updates)
+
+    def _get_upload_client(self):
+        if self.upload_client is None:
+            if self.connection_config.get('s3_bucket', None):
+                self.upload_client = S3UploadClient(self.connection_config)
+            # Use table stage
+            else:
+                self.upload_client = SnowflakeUploadClient(self.connection_config, self)
+
+        return self.upload_client
